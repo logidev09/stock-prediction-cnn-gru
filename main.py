@@ -62,9 +62,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d"))
 
         st.subheader("Data keseluruhan")
-        st.write(full_data.head(1), use_container_width=True)
+        st.write(full_data.head(1), width="stretch")
         st.write("Hingga")
-        st.write(full_data.tail(1), use_container_width=True)
+        st.write(full_data.tail(1), width="stretch")
 
         # Mengubah index menjadi datetime untuk memudahkan plotting
         full_data['Date'] = pd.to_datetime(full_data['Date'])
@@ -86,7 +86,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.pyplot(fig1)
 
         with st.popover("Tampilkan Semua Data"):
-            st.write(full_data, use_container_width=True)
+            st.write(full_data, width="stretch")
 
         # DATA PELATIHAN
         # Pilihan untuk input jumlah data pelatihan
@@ -153,9 +153,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         # hingga ini
 
         st.subheader("Data Pelatihan yang telah dipilih")
-        st.write(data.head(1), use_container_width=True)
+        st.write(data.head(1), width="stretch")
         st.write("Hingga")
-        st.write(data.tail(1), use_container_width=True)
+        st.write(data.tail(1), width="stretch")
 
         # Mengubah index menjadi datetime untuk data pelatihan
         data['Date'] = pd.to_datetime(data['Date'])
@@ -177,7 +177,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.pyplot(fig2)
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
-            st.write(data, use_container_width=True)
+            st.write(data, width="stretch")
 
     with st.expander("3. Pra-pemrosesan Data"):
 
@@ -596,7 +596,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                                 st.metric("MAPE", f"{mape:.3f}")
                                 # Menampilkan tabel perbandingan
                                 with st.popover("Tampilkan Tabel"):
-                                    st.dataframe(table_df, use_container_width=True)
+                                    st.dataframe(table_df, width="stretch")
                             with col2:
                                 st.metric("RMSE", f"{rmse:.3f}")
                                 st.metric("R2 Score", f"{r2:.3f}")
@@ -786,29 +786,29 @@ if menu_type == "Informasi Umum":
         with open('./TEXT/gambaran_umum.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
-        # Display the HTML content using st.components.v1.html
-        st.components.v1.html(html_content, height=2000, scrolling=True)
+        # Display the HTML content using st.iframe
+        st.iframe(html_content, height=2000, scrolling=True)
         
     elif selected == "Glosarium":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
-        # Display the HTML content using st.components.v1.html
-        st.components.v1.html(html_content, height=4000, scrolling=True)
+        # Display the HTML content using st.iframe
+        st.iframe(html_content, height=4000, scrolling=True)
         
     elif selected == "Metodologi":
         with open('./TEXT/metodologi.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
     
-        # Display the HTML content using st.components.v1.html
-        st.components.v1.html(html_content, height=6000, scrolling=True)  
+        # Display the HTML content using st.iframe
+        st.iframe(html_content, height=6000, scrolling=True)  
         
 if menu_type == "Prediksi Saham":
     
     if selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
         # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BMRI.png')
-        st.image(image, caption=None, width=500, use_container_width='False', clamp=False, channels="RGB", output_format="auto")
+        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
         
         # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #003A70;'>PT Bank Mandiri Tbk</h1>", unsafe_allow_html=True)
@@ -829,7 +829,7 @@ if menu_type == "Prediksi Saham":
     elif selected == "PT Bank Rakyat Indonesia Tbk (BRI)":
         # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBRI.png')
-        st.image(image, caption=None, width=385, use_container_width='False', clamp=False, channels="RGB", output_format="auto")
+        st.image(image, caption=None, width=385, clamp=False, channels="RGB", output_format="auto")
         
         # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #00529C;'>PT Bank Rakyat Indonesia Tbk</h1>", unsafe_allow_html=True) 
@@ -849,7 +849,7 @@ if menu_type == "Prediksi Saham":
     elif selected == "PT Bank Central Asia Tbk (BCA)":
         # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBCA.png')
-        st.image(image, caption=None, width=465, use_container_width='False', clamp=False, channels="RGB", output_format="auto")
+        st.image(image, caption=None, width=465, clamp=False, channels="RGB", output_format="auto")
         
         # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #0060AF;'>PT Bank Central Asia Tbk</h1>", unsafe_allow_html=True)
@@ -869,7 +869,7 @@ if menu_type == "Prediksi Saham":
     elif selected == "PT Bank Negara Indonesia Tbk (BNI)":
         # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBNI.png')
-        st.image(image, caption=None, width=500, use_container_width='False', clamp=False, channels="RGB", output_format="auto")
+        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
         
         # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #006885;'>PT Bank Negara Indonesia Tbk</h1>", unsafe_allow_html=True)
@@ -889,7 +889,7 @@ if menu_type == "Prediksi Saham":
     elif selected == "PT Bank Syariah Indonesia Tbk (BSI)":
         # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BRIS.png')
-        st.image(image, caption=None, width=520, use_container_width='False', clamp=False, channels="RGB", output_format="auto")
+        st.image(image, caption=None, width=520, clamp=False, channels="RGB", output_format="auto")
         
         # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #00A39D;'>PT Bank Syariah Indonesia Tbk</h1>", unsafe_allow_html=True)
