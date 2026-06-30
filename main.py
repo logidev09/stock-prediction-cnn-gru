@@ -72,7 +72,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     
                 data.reset_index(inplace=True)
                 
-                # Ensure we have a Date column - yfinance uses 'Date' by default after reset_index
+                # Ensure we have a Date column
                 if 'Date' not in data.columns:
                     if 'Datetime' in data.columns:
                         data.rename(columns={'Datetime': 'Date'}, inplace=True)
@@ -100,7 +100,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write("Hingga")
         st.write(full_data.tail(1))
 
-        # Mengubah index menjadi datetime untuk memudahkan plotting
         # Handle Date column - ensure it exists and is datetime
         if 'Date' not in full_data.columns:
             if full_data.index.name == 'Date' or full_data.index.name == 'Datetime':
@@ -203,7 +202,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write("Hingga")
         st.write(data.tail(1))
 
-        # Mengubah index menjadi datetime untuk data pelatihan
         # Handle Date column for training data
         if 'Date' not in data.columns:
             if data.index.name == 'Date' or data.index.name == 'Datetime':
@@ -627,8 +625,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item())  # Extract scalar value
-                        last_forecast_price = float(forecast[-1][0].item()) if hasattr(forecast[-1][0], 'item') else float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item()) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
+                        last_actual_price = float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1])  # Extract scalar value
+                        last_forecast_price = float(forecast[-1][0].item()) if hasattr(forecast[-1][0], 'item') else float(forecast[-1][0])  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
                         if len(y_test) >= forecast_days:
@@ -705,20 +703,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 
                 if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
-                    
-                st.subheader("Diagram Alur Kerja")
-                st.markdown("""
-                ```mermaid
-graph TD
-                    A[Input Saham/Crypto] --> B[Pengumpulan Data]
-                    B --> C[Pra-pemrosesan Data]
-                    C --> D[Perancangan Model CNN-GRU]
-                    D --> E[Pelatihan Model]
-                    E --> F[Evaluasi Model]
-                    F --> G[Visualisasi Prediksi]
-                    G --> H[Interpretasi Hasil]
-                ```
-                """)st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
+                    st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
@@ -879,164 +864,9 @@ if menu_type == "Prediksi Saham":
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
         
-        
-        
-        # Popular Stock Buttons
-        st.subheader("Pilihan Saham Populer")
-        stock_col1, stock_col2, stock_col3 = st.columns(3)
-        with stock_col1:
-            if st.button("BBCA.JK"):
-                custom_stock = "BBCA.JK"
-            if st.button("BMRI.JK"):
-                custom_stock = "BMRI.JK"
-            if st.button("AAPL"):
-                custom_stock = "AAPL"
-        with stock_col2:
-            if st.button("GOOGL"):
-                custom_stock = "GOOGL"
-            if st.button("MSFT"):
-                custom_stock = "MSFT"
-            if st.button("BBNI.JK"):
-                custom_stock = "BBNI.JK"
-        with stock_col3:
-            if st.button("TSLA"):
-                custom_stock = "TSLA"
-            if st.button("AMZN"):
-                custom_stock = "AMZN"
-            if st.button("BRIS.JK"):
-                custom_stock = "BRIS.JK"
-        
-        # Popular Crypto Buttons
-        st.subheader("Pilihan Crypto Populer")
-        crypto_col1, crypto_col2, crypto_col3 = st.columns(3)
-        with crypto_col1:
-            if st.button("BTC-USD"):
-                custom_stock = "BTC-USD"
-            if st.button("ETH-USD"):
-                custom_stock = "ETH-USD"
-        with crypto_col2:
-            if st.button("SOL-USD"):
-                custom_stock = "SOL-USD"
-            if st.button("BNB-USD"):
-                custom_stock = "BNB-USD"
-        with crypto_col3:
-            if st.button("XRP-USD"):
-                custom_stock = "XRP-USD"
-            if st.button("DOGE-USD"):
-                custom_stock = "DOGE-USD"
-        
         custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
         
         if custom_stock:
-            st.cache_data.clear()
-            main(custom_stock)
-        else:
-            st.warning("Silakan masukkan kode saham terlebih dahulu")
-        
-    
-    if selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
-        # Menampilkan logo Perusahaan
-        image = Image.open('./LOGO/BMRI.png')
-        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
-        
-        # Menampilkan Judul
-        st.markdown("<h1 style='text-align: left; color: #003A70;'>PT Bank Mandiri Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
-        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Mandiri (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 2 Oktober 1998 sebagai hasil merger 4 bank pemerintah. Bank Mandiri terdaftar di Bursa Efek Indonesia dengan kode saham BMRI. Pemegang saham utamanya adalah Pemerintah Indonesia. Bank ini berfokus pada layanan korporasi, komersial, mikro & ritel, dan tresuri. Bank Mandiri memiliki jaringan cabang dan ATM yang luas di Indonesia serta terus mengembangkan ekosistem digital melalui Livin' by Mandiri.</p>", unsafe_allow_html=True)
-        st.write('Informasi singkat:')
-        st.markdown('- **Tanggal Didirikan:** 2 Oktober 1998')
-        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BMRI')
-        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (66,56%)')
-        st.markdown('- **Fokus Pada:** Layanan korporasi, komersial, mikro & ritel, dan tresuri')
-        st.markdown('- **Mengembangkan:** Ekosistem digital melalui Livin by Mandiri')
-        
-        st.cache_data.clear()
-        main("BMRI.JK")
- 
-
-    elif selected == "PT Bank Rakyat Indonesia Tbk (BRI)":
-        # Menampilkan logo Perusahaan
-        image = Image.open('./LOGO/BBRI.png')
-        st.image(image, caption=None, width=385, clamp=False, channels="RGB", output_format="auto")
-        
-        # Menampilkan Judul
-        st.markdown("<h1 style='text-align: left; color: #00529C;'>PT Bank Rakyat Indonesia Tbk</h1>", unsafe_allow_html=True) 
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
-        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Rakyat Indonesia (Persero) Tbk (BRI) adalah bank BUMN terbesar di Indonesia yang didirikan pada 16 Desember 1895. BRI terdaftar di Bursa Efek Indonesia dengan kode saham BBRI. Pemegang saham utamanya adalah Pemerintah Indonesia. BRI berfokus utama pada pembiayaan UMKM dan sektor pertanian. Bank ini memiliki jaringan unit kerja terluas hingga ke pelosok desa dan terus mengembangkan layanan perbankan digital seperti BRImo.</p>", unsafe_allow_html=True)
-        st.write('Informasi singkat:')
-        st.markdown('- **Tanggal Didirikan:** 16 Desember 1895')
-        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBRI')
-        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (53,20%)')
-        st.markdown('- **Fokus utama Pada:** Pembiayaan UMKM dan sektor pertanian')
-        st.markdown('- **Mengembangkan:** Layanan perbankan digital seperti BRImo')
-        
-        st.cache_data.clear()
-        main("BBRI.JK")
-
-    elif selected == "PT Bank Central Asia Tbk (BCA)":
-        # Menampilkan logo Perusahaan
-        image = Image.open('./LOGO/BBCA.png')
-        st.image(image, caption=None, width=465, clamp=False, channels="RGB", output_format="auto")
-        
-        # Menampilkan Judul
-        st.markdown("<h1 style='text-align: left; color: #0060AF;'>PT Bank Central Asia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
-        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Central Asia Tbk adalah bank swasta terbesar di Indonesia yang didirikan pada 21 Februari 1957. BCA terdaftar di Bursa Efek Indonesia dengan kode saham BBCA. Pemegang saham utamanya adalah PT Dwimuria Investama Andalan. BCA berfokus pada layanan perbankan ritel, UKM, dan korporasi. Bank ini memiliki jaringan cabang dan ATM yang luas di seluruh Indonesia serta dikenal dengan layanan perbankan digitalnya seperti m-BCA dan KlikBCA.</p>", unsafe_allow_html=True)
-        st.write('Informasi singkat:')
-        st.markdown('- **Tanggal Didirikan:** 21 Februari 1957')
-        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBCA')
-        st.markdown('- **Pemegang Saham Utama:** PT Dwimuria Investama Andalan (54,94%)')
-        st.markdown('- **Fokus Pada:** Layanan perbankan ritel, UKM, dan korporasi')
-        st.markdown('- **Dikenal dengan:** Layanan perbankan digital seperti m-BCA dan KlikBCA')
-        
-        st.cache_data.clear()
-        main("BBCA.JK")  
-
-    elif selected == "PT Bank Negara Indonesia Tbk (BNI)":
-        # Menampilkan logo Perusahaan
-        image = Image.open('./LOGO/BBNI.png')
-        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
-        
-        # Menampilkan Judul
-        st.markdown("<h1 style='text-align: left; color: #006885;'>PT Bank Negara Indonesia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
-        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Negara Indonesia (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 5 Juli 1946. BNI terdaftar di Bursa Efek Indonesia dengan kode saham BBNI. Pemegang saham utamanya adalah Pemerintah Indonesia. BNI berfokus pada layanan korporasi, ritel, dan internasional. Bank ini memiliki jaringan cabang di dalam dan luar negeri serta terus mengembangkan layanan digital seperti BNI Mobile Banking.</p>", unsafe_allow_html=True)
-        st.write('Informasi singkat:')
-        st.markdown('- **Tanggal Didirikan:** 5 Juli 1946')
-        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBNI')
-        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (60%)')
-        st.markdown('- **Fokus Pada:** Layanan korporasi, ritel, dan internasional')
-        st.markdown('- **Mengembangkan:** Layanan digital seperti BNI Mobile Banking')
-        
-        st.cache_data.clear()
-        main("BBNI.JK")
-
-    elif selected == "PT Bank Syariah Indonesia Tbk (BSI)":
-        # Menampilkan logo Perusahaan
-        image = Image.open('./LOGO/BRIS.png')
-        st.image(image, caption=None, width=520, clamp=False, channels="RGB", output_format="auto")
-        
-        # Menampilkan Judul
-        st.markdown("<h1 style='text-align: left; color: #00A39D;'>PT Bank Syariah Indonesia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
-        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Syariah Indonesia Tbk adalah bank syariah terbesar di Indonesia yang didirikan pada 1 Februari 2021 sebagai hasil merger 3 bank syariah BUMN. BSI terdaftar di Bursa Efek Indonesia dengan kode saham BRIS. Pemegang saham utamanya adalah PT Bank Mandiri (Persero) Tbk, PT Bank Negara Indonesia (Persero) Tbk, dan PT Bank Rakyat Indonesia (Persero) Tbk. BSI berfokus pada layanan perbankan syariah ritel dan korporasi serta terus mengembangkan ekosistem keuangan syariah digital.</p>", unsafe_allow_html=True)
-        st.write('Informasi singkat:')
-        st.markdown('- **Tanggal Didirikan:** 1 Februari 2021 (hasil merger 3 bank syariah BUMN)')
-        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BRIS')
-        st.markdown('- **Pemegang Saham Utama:** PT Bank Mandiri (Persero) Tbk (51,47%), PT Bank Negara Indonesia (Persero) Tbk (23,24%), PT Bank Rakyat Indonesia (Persero) Tbk (15,38%)')
-        st.markdown('- **Fokus Pada:** Layanan perbankan syariah ritel dan korporasi')
-        st.markdown('- **Mengembangkan:** Ekosistem keuangan syariah digital')
-        
-        st.cache_data.clear()
-        main("BRIS.JK")
-        custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK, BTC-USD")
-        
-        if custom_stock:if custom_stock:
             st.cache_data.clear()
             main(custom_stock)
         else:
