@@ -58,7 +58,19 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 placeholder.code('\n'.join(lines[:i]), language='python')
                 time.sleep(0.1)  # Adjust this value to control the speed of the animation
 
-            st.success("Library berhasil diimpor")
+            
+                st.subheader("Diagram Alur Kerja")
+                st.markdown("```mermaid
+graph TD
+    A[Input Saham/Crypto] --> B[Pengumpulan Data]
+    B --> C[Pra-pemrosesan Data]
+    C --> D[Perancangan Model CNN-GRU]
+    D --> E[Pelatihan Model]
+    E --> F[Evaluasi Model]
+    F --> G[Visualisasi Prediksi]
+    G --> H[Interpretasi Hasil]
+```", unsafe_allow_html=True)
+                st.success("Library berhasil diimpor")
 
     with st.expander("2. Pengumpulan Data"):
 
