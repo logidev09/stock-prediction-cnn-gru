@@ -97,7 +97,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write(full_data.tail(1))
 
         # Mengubah index menjadi datetime untuk memudahkan plotting
-        // Handle Date column - ensure it exists and is datetime
+        # Handle Date column - ensure it exists and is datetime
         if 'Date' not in full_data.columns:
             if full_data.index.name == 'Date' or full_data.index.name == 'Datetime':
                 full_data.reset_index(inplace=True)
@@ -200,7 +200,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write(data.tail(1))
 
         # Mengubah index menjadi datetime untuk data pelatihan
-        // Handle Date column for training data
+        # Handle Date column for training data
         if 'Date' not in data.columns:
             if data.index.name == 'Date' or data.index.name == 'Datetime':
                 data.reset_index(inplace=True)
@@ -623,8 +623,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
-                        last_forecast_price = float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
+                        last_actual_price = float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
+                        last_forecast_price = float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item()) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
                         if len(y_test) >= forecast_days:
