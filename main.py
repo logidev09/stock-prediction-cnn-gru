@@ -821,21 +821,21 @@ if menu_type == "Informasi Umum":
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.markdown(html_content, , unsafe_allow_html=True)
+        st.markdown(html_content, unsafe_allow_html=True)
         
     elif selected == "Glosarium":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.markdown(html_content, , unsafe_allow_html=True)
+        st.markdown(html_content, unsafe_allow_html=True)
         
     elif selected == "Metodologi":
         with open('./TEXT/metodologi.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
     
         # Display the HTML content using st.iframe
-        st.markdown(html_content, , unsafe_allow_html=True)  
+        st.markdown(html_content, unsafe_allow_html=True)  
         
 if menu_type == "Prediksi Saham":
     
