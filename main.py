@@ -58,19 +58,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 placeholder.code('\n'.join(lines[:i]), language='python')
                 time.sleep(0.1)  # Adjust this value to control the speed of the animation
 
-            
-                st.subheader("Diagram Alur Kerja")
-                st.markdown("```mermaid
-graph TD
-    A[Input Saham/Crypto] --> B[Pengumpulan Data]
-    B --> C[Pra-pemrosesan Data]
-    C --> D[Perancangan Model CNN-GRU]
-    D --> E[Pelatihan Model]
-    E --> F[Evaluasi Model]
-    F --> G[Visualisasi Prediksi]
-    G --> H[Interpretasi Hasil]
-```", unsafe_allow_html=True)
-                st.success("Library berhasil diimpor")
+            st.success("Library berhasil diimpor")
 
     with st.expander("2. Pengumpulan Data"):
 
@@ -116,10 +104,9 @@ graph TD
         st.write("Hingga")
         st.write(full_data.tail(1))
 
-        # Set Date as index for plotting
-        if 'Date' in full_data.columns:
-            full_data['Date'] = pd.to_datetime(full_data['Date'])
-            full_data.set_index('Date', inplace=True)
+        # Mengubah index menjadi datetime untuk memudahkan plotting
+        full_data['Date'] = pd.to_datetime(full_data['Date'])
+        full_data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
         fig1, ax1 = plt.subplots(figsize=(14, 7))
@@ -208,10 +195,9 @@ graph TD
         st.write("Hingga")
         st.write(data.tail(1))
 
-        # Set Date as index for training data
-        if 'Date' in data.columns:
-            data['Date'] = pd.to_datetime(data['Date'])
-            data.set_index('Date', inplace=True)
+        # Mengubah index menjadi datetime untuk data pelatihan
+        data['Date'] = pd.to_datetime(data['Date'])
+        data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data pelatihan
         fig2, ax2 = plt.subplots(figsize=(14, 7))
@@ -860,46 +846,6 @@ if menu_type == "Prediksi Saham":
     if selected == "Input Saham Custom":
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
-        
-        
-        
-        # Popular Stock Buttons
-        st.subheader("Pilihan Saham Populer")
-        stock_col1, stock_col2, stock_col3 = st.columns(3)
-        with stock_col1:
-            if st.button("BBCA.JK"):
-                custom_stock = "BBCA.JK"
-            if st.button("BMRI.JK"):
-                custom_stock = "BMRI.JK"
-        with stock_col2:
-            if st.button("AAPL"):
-                custom_stock = "AAPL"
-            if st.button("GOOGL"):
-                custom_stock = "GOOGL"
-        with stock_col3:
-            if st.button("MSFT"):
-                custom_stock = "MSFT"
-            if st.button("TSLA"):
-                custom_stock = "TSLA"
-        
-        # Popular Crypto Buttons
-        st.subheader("Pilihan Crypto Populer")
-        crypto_col1, crypto_col2, crypto_col3 = st.columns(3)
-        with crypto_col1:
-            if st.button("BTC-USD"):
-                custom_stock = "BTC-USD"
-            if st.button("ETH-USD"):
-                custom_stock = "ETH-USD"
-        with crypto_col2:
-            if st.button("SOL-USD"):
-                custom_stock = "SOL-USD"
-            if st.button("BNB-USD"):
-                custom_stock = "BNB-USD"
-        with crypto_col3:
-            if st.button("XRP-USD"):
-                custom_stock = "XRP-USD"
-            if st.button("DOGE-USD"):
-                custom_stock = "DOGE-USD"
         
         custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
         
