@@ -18,14 +18,13 @@ from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import LambdaCallback
 from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-f
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 
 # Helper function to safely extract scalar from pandas Series
 def safe_float(value):
     if hasattr(value, 'item'):
         return float(value.item())
     return float(value)
-rom sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 
 def main(stock):
     st.header(f"Prediksi Harga Saham dengan kode {stock}")
