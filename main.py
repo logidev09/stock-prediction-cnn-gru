@@ -76,11 +76,11 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Date' not in data.columns and 'Datetime' in data.columns:
                     data.rename(columns={'Datetime': 'Date'}, inplace=True)
                 elif 'Date' not in data.columns and data.index.name == 'Date':
-                    data['Date'] = data.index
+                    data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
                     data.reset_index(drop=True, inplace=True)
                 elif 'Date' not in data.columns:
                     # If no date column exists, create one from index
-                    data['Date'] = data.index
+                    data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
                     data.reset_index(drop=True, inplace=True)
                     
                 return data
@@ -104,12 +104,12 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in full_data.columns:
                     full_data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                full_data['Date'] = full_data.index
+                full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None) = full_data.index
                 full_data.reset_index(drop=True, inplace=True)
         
         # Ensure Date is datetime
         if 'Date' in full_data.columns:
-            full_data['Date'] = pd.to_datetime(full_data['Date'])
+            full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None) = pd.to_datetime(full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None))
             full_data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
@@ -207,11 +207,11 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in data.columns:
                     data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                data['Date'] = data.index
+                data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
                 data.reset_index(drop=True, inplace=True)
         
         if 'Date' in data.columns:
-            data['Date'] = pd.to_datetime(data['Date'])
+            data.get('Date', data.index if hasattr(data, 'index') else None) = pd.to_datetime(data.get('Date', data.index if hasattr(data, 'index') else None))
             data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data pelatihan
@@ -623,8 +623,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
-                        last_forecast_price = float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item()) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
+                        last_actual_price = float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
+                        last_forecast_price = float(forecast[-1][0].item()) if hasattr(forecast[-1][0], 'item') else float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item()) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
                         if len(y_test) >= forecast_days:
