@@ -72,16 +72,20 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     
                 data.reset_index(inplace=True)
                 
-                # Ensure we have a Date column
-                if 'Date' not in data.columns and 'Datetime' in data.columns:
-                    data.rename(columns={'Datetime': 'Date'}, inplace=True)
-                elif 'Date' not in data.columns and data.index.name == 'Date':
-                    data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
-                    data.reset_index(drop=True, inplace=True)
-                elif 'Date' not in data.columns:
-                    # If no date column exists, create one from index
-                    data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
-                    data.reset_index(drop=True, inplace=True)
+                # Ensure we have a Date column - yfinance uses 'Date' by default after reset_index
+                if 'Date' not in data.columns:
+                    if 'Datetime' in data.columns:
+                        data.rename(columns={'Datetime': 'Date'}, inplace=True)
+                    elif data.index.name == 'Date' or data.index.name == 'Datetime':
+                        data['Date'] = data.index
+                        data.reset_index(drop=True, inplace=True)
+                    else:
+                        data['Date'] = data.index
+                        data.reset_index(drop=True, inplace=True)
+                    
+                # Ensure Date is datetime
+                if 'Date' in data.columns:
+                    data['Date'] = pd.to_datetime(data['Date'])
                     
                 return data
             except Exception as e:
@@ -104,12 +108,12 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in full_data.columns:
                     full_data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None) = full_data.index
+                full_data['Date'] = full_data.index
                 full_data.reset_index(drop=True, inplace=True)
         
         # Ensure Date is datetime
         if 'Date' in full_data.columns:
-            full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None) = pd.to_datetime(full_data.get('Date', full_data.index if hasattr(full_data, 'index') else None))
+            full_data['Date'] = pd.to_datetime(full_data['Date'])
             full_data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
@@ -207,11 +211,11 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in data.columns:
                     data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                data.get('Date', data.index if hasattr(data, 'index') else None) = data.index
+                data['Date'] = data.index
                 data.reset_index(drop=True, inplace=True)
         
         if 'Date' in data.columns:
-            data.get('Date', data.index if hasattr(data, 'index') else None) = pd.to_datetime(data.get('Date', data.index if hasattr(data, 'index') else None))
+            data['Date'] = pd.to_datetime(data['Date'])
             data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data pelatihan
