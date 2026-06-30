@@ -62,9 +62,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d"))
 
         st.subheader("Data keseluruhan")
-        st.write(full_data.head(1), width="stretch")
+        st.write(full_data.head(1))
         st.write("Hingga")
-        st.write(full_data.tail(1), width="stretch")
+        st.write(full_data.tail(1))
 
         # Mengubah index menjadi datetime untuk memudahkan plotting
         full_data['Date'] = pd.to_datetime(full_data['Date'])
@@ -86,7 +86,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.pyplot(fig1)
 
         with st.popover("Tampilkan Semua Data"):
-            st.write(full_data, width="stretch")
+            st.write(full_data)
 
         # DATA PELATIHAN
         # Pilihan untuk input jumlah data pelatihan
@@ -153,9 +153,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         # hingga ini
 
         st.subheader("Data Pelatihan yang telah dipilih")
-        st.write(data.head(1), width="stretch")
+        st.write(data.head(1))
         st.write("Hingga")
-        st.write(data.tail(1), width="stretch")
+        st.write(data.tail(1))
 
         # Mengubah index menjadi datetime untuk data pelatihan
         data['Date'] = pd.to_datetime(data['Date'])
@@ -177,7 +177,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.pyplot(fig2)
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
-            st.write(data, width="stretch")
+            st.write(data)
 
     with st.expander("3. Pra-pemrosesan Data"):
 
@@ -722,7 +722,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 if __name__ == "__main__":
     
     with st.sidebar:
-        st.write("<h1 style='text-align: left'><b>DASHBOARD PREDIKSI SAHAM <br> 5 PERUSAHAAN BANK TERBESAR DI INDONESIA DENGAN MENGGUNAKAN MODEL CNN-GRU </b></h1>", unsafe_allow_html=True)
+        st.write("<h1 style='text-align: left'><b>DASHBOARD PREDIKSI SAHAM 5 PERUSAHAAN BANK TERBESAR DI INDONESIA DENGAN MENGGUNAKAN MODEL CNN-GRU</b></h1>", unsafe_allow_html=True)
         
         st.write("\n")
         
@@ -749,8 +749,8 @@ if __name__ == "__main__":
         elif menu_type == "Prediksi Saham":
             selected = option_menu(
                 menu_title=None,
-                options=["PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"],
-                icons=["bank", "bank", "bank", "bank", "bank"],
+                options=["Input Saham Custom", "PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"],
+                icons=["search", "bank", "bank", "bank", "bank", "bank"],
                 default_index=0,
                 orientation="vertikal"
             )
@@ -787,23 +787,36 @@ if menu_type == "Informasi Umum":
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=2000, scrolling=True)
+        st.iframe(html_content, height=2000)
         
     elif selected == "Glosarium":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=4000, scrolling=True)
+        st.iframe(html_content, height=4000)
         
     elif selected == "Metodologi":
         with open('./TEXT/metodologi.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
     
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=6000, scrolling=True)  
+        st.iframe(html_content, height=6000)  
         
 if menu_type == "Prediksi Saham":
+    
+    if selected == "Input Saham Custom":
+        st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
+        
+        custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
+        
+        if custom_stock:
+            st.cache_data.clear()
+            main(custom_stock)
+        else:
+            st.warning("Silakan masukkan kode saham terlebih dahulu")
+        
     
     if selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
         # Menampilkan logo Perusahaan
