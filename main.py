@@ -66,11 +66,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         @st.cache_data
         def load_data(ticker, start_date, end_date):
             try:
-                # Try crypto first if it looks like a crypto symbol
                 if crypto_yfinance and (ticker.endswith('-USD') or ticker.endswith('-IDR') or ticker in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD']):
                     data = cyf.download(ticker, start=start_date, end=end_date)
                 else:
-                    # Try as regular stock
                     data = yf.download(ticker, start=start_date, end=end_date)
                 
                 if data.empty:
@@ -79,7 +77,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     
                 data.reset_index(inplace=True)
                 
-                # Ensure we have a Date column
                 if 'Date' not in data.columns:
                     if 'Datetime' in data.columns:
                         data.rename(columns={'Datetime': 'Date'}, inplace=True)
@@ -87,7 +84,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         data['Date'] = data.index
                         data.reset_index(drop=True, inplace=True)
                     
-                # Ensure Date is datetime
                 if 'Date' in data.columns:
                     data['Date'] = pd.to_datetime(data['Date'])
                     
