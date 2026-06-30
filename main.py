@@ -627,7 +627,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
+                        last_actual_price = float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item()) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item(.item()) if hasattr(data['Close'].iloc[-1].item(, 'item') else float(data['Close'].iloc[-1].item())  # Extract scalar value
                         last_forecast_price = float(forecast[-1][0].item()) if hasattr(forecast[-1][0], 'item') else float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item()) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
@@ -928,6 +928,115 @@ if menu_type == "Prediksi Saham":
         custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
         
         if custom_stock:
+            st.cache_data.clear()
+            main(custom_stock)
+        else:
+            st.warning("Silakan masukkan kode saham terlebih dahulu")
+        
+    
+    if selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
+        # Menampilkan logo Perusahaan
+        image = Image.open('./LOGO/BMRI.png')
+        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
+        
+        # Menampilkan Judul
+        st.markdown("<h1 style='text-align: left; color: #003A70;'>PT Bank Mandiri Tbk</h1>", unsafe_allow_html=True)
+        
+        # Menampilkan deskripsi singkat tentang Perusahaan
+        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Mandiri (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 2 Oktober 1998 sebagai hasil merger 4 bank pemerintah. Bank Mandiri terdaftar di Bursa Efek Indonesia dengan kode saham BMRI. Pemegang saham utamanya adalah Pemerintah Indonesia. Bank ini berfokus pada layanan korporasi, komersial, mikro & ritel, dan tresuri. Bank Mandiri memiliki jaringan cabang dan ATM yang luas di Indonesia serta terus mengembangkan ekosistem digital melalui Livin' by Mandiri.</p>", unsafe_allow_html=True)
+        st.write('Informasi singkat:')
+        st.markdown('- **Tanggal Didirikan:** 2 Oktober 1998')
+        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BMRI')
+        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (66,56%)')
+        st.markdown('- **Fokus Pada:** Layanan korporasi, komersial, mikro & ritel, dan tresuri')
+        st.markdown('- **Mengembangkan:** Ekosistem digital melalui Livin by Mandiri')
+        
+        st.cache_data.clear()
+        main("BMRI.JK")
+ 
+
+    elif selected == "PT Bank Rakyat Indonesia Tbk (BRI)":
+        # Menampilkan logo Perusahaan
+        image = Image.open('./LOGO/BBRI.png')
+        st.image(image, caption=None, width=385, clamp=False, channels="RGB", output_format="auto")
+        
+        # Menampilkan Judul
+        st.markdown("<h1 style='text-align: left; color: #00529C;'>PT Bank Rakyat Indonesia Tbk</h1>", unsafe_allow_html=True) 
+        
+        # Menampilkan deskripsi singkat tentang Perusahaan
+        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Rakyat Indonesia (Persero) Tbk (BRI) adalah bank BUMN terbesar di Indonesia yang didirikan pada 16 Desember 1895. BRI terdaftar di Bursa Efek Indonesia dengan kode saham BBRI. Pemegang saham utamanya adalah Pemerintah Indonesia. BRI berfokus utama pada pembiayaan UMKM dan sektor pertanian. Bank ini memiliki jaringan unit kerja terluas hingga ke pelosok desa dan terus mengembangkan layanan perbankan digital seperti BRImo.</p>", unsafe_allow_html=True)
+        st.write('Informasi singkat:')
+        st.markdown('- **Tanggal Didirikan:** 16 Desember 1895')
+        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBRI')
+        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (53,20%)')
+        st.markdown('- **Fokus utama Pada:** Pembiayaan UMKM dan sektor pertanian')
+        st.markdown('- **Mengembangkan:** Layanan perbankan digital seperti BRImo')
+        
+        st.cache_data.clear()
+        main("BBRI.JK")
+
+    elif selected == "PT Bank Central Asia Tbk (BCA)":
+        # Menampilkan logo Perusahaan
+        image = Image.open('./LOGO/BBCA.png')
+        st.image(image, caption=None, width=465, clamp=False, channels="RGB", output_format="auto")
+        
+        # Menampilkan Judul
+        st.markdown("<h1 style='text-align: left; color: #0060AF;'>PT Bank Central Asia Tbk</h1>", unsafe_allow_html=True)
+        
+        # Menampilkan deskripsi singkat tentang Perusahaan
+        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Central Asia Tbk adalah bank swasta terbesar di Indonesia yang didirikan pada 21 Februari 1957. BCA terdaftar di Bursa Efek Indonesia dengan kode saham BBCA. Pemegang saham utamanya adalah PT Dwimuria Investama Andalan. BCA berfokus pada layanan perbankan ritel, UKM, dan korporasi. Bank ini memiliki jaringan cabang dan ATM yang luas di seluruh Indonesia serta dikenal dengan layanan perbankan digitalnya seperti m-BCA dan KlikBCA.</p>", unsafe_allow_html=True)
+        st.write('Informasi singkat:')
+        st.markdown('- **Tanggal Didirikan:** 21 Februari 1957')
+        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBCA')
+        st.markdown('- **Pemegang Saham Utama:** PT Dwimuria Investama Andalan (54,94%)')
+        st.markdown('- **Fokus Pada:** Layanan perbankan ritel, UKM, dan korporasi')
+        st.markdown('- **Dikenal dengan:** Layanan perbankan digital seperti m-BCA dan KlikBCA')
+        
+        st.cache_data.clear()
+        main("BBCA.JK")  
+
+    elif selected == "PT Bank Negara Indonesia Tbk (BNI)":
+        # Menampilkan logo Perusahaan
+        image = Image.open('./LOGO/BBNI.png')
+        st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
+        
+        # Menampilkan Judul
+        st.markdown("<h1 style='text-align: left; color: #006885;'>PT Bank Negara Indonesia Tbk</h1>", unsafe_allow_html=True)
+        
+        # Menampilkan deskripsi singkat tentang Perusahaan
+        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Negara Indonesia (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 5 Juli 1946. BNI terdaftar di Bursa Efek Indonesia dengan kode saham BBNI. Pemegang saham utamanya adalah Pemerintah Indonesia. BNI berfokus pada layanan korporasi, ritel, dan internasional. Bank ini memiliki jaringan cabang di dalam dan luar negeri serta terus mengembangkan layanan digital seperti BNI Mobile Banking.</p>", unsafe_allow_html=True)
+        st.write('Informasi singkat:')
+        st.markdown('- **Tanggal Didirikan:** 5 Juli 1946')
+        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BBNI')
+        st.markdown('- **Pemegang Saham Utama:** Pemerintah Indonesia (60%)')
+        st.markdown('- **Fokus Pada:** Layanan korporasi, ritel, dan internasional')
+        st.markdown('- **Mengembangkan:** Layanan digital seperti BNI Mobile Banking')
+        
+        st.cache_data.clear()
+        main("BBNI.JK")
+
+    elif selected == "PT Bank Syariah Indonesia Tbk (BSI)":
+        # Menampilkan logo Perusahaan
+        image = Image.open('./LOGO/BRIS.png')
+        st.image(image, caption=None, width=520, clamp=False, channels="RGB", output_format="auto")
+        
+        # Menampilkan Judul
+        st.markdown("<h1 style='text-align: left; color: #00A39D;'>PT Bank Syariah Indonesia Tbk</h1>", unsafe_allow_html=True)
+        
+        # Menampilkan deskripsi singkat tentang Perusahaan
+        st.markdown("<p style='text-align: justify; color: black;'>PT Bank Syariah Indonesia Tbk adalah bank syariah terbesar di Indonesia yang didirikan pada 1 Februari 2021 sebagai hasil merger 3 bank syariah BUMN. BSI terdaftar di Bursa Efek Indonesia dengan kode saham BRIS. Pemegang saham utamanya adalah PT Bank Mandiri (Persero) Tbk, PT Bank Negara Indonesia (Persero) Tbk, dan PT Bank Rakyat Indonesia (Persero) Tbk. BSI berfokus pada layanan perbankan syariah ritel dan korporasi serta terus mengembangkan ekosistem keuangan syariah digital.</p>", unsafe_allow_html=True)
+        st.write('Informasi singkat:')
+        st.markdown('- **Tanggal Didirikan:** 1 Februari 2021 (hasil merger 3 bank syariah BUMN)')
+        st.markdown('- **Kode Saham Bursa Efek Indonesia:** BRIS')
+        st.markdown('- **Pemegang Saham Utama:** PT Bank Mandiri (Persero) Tbk (51,47%), PT Bank Negara Indonesia (Persero) Tbk (23,24%), PT Bank Rakyat Indonesia (Persero) Tbk (15,38%)')
+        st.markdown('- **Fokus Pada:** Layanan perbankan syariah ritel dan korporasi')
+        st.markdown('- **Mengembangkan:** Ekosistem keuangan syariah digital')
+        
+        st.cache_data.clear()
+        main("BRIS.JK")
+        custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK, BTC-USD")
+        
+        if custom_stock:if custom_stock:
             st.cache_data.clear()
             main(custom_stock)
         else:
