@@ -2,6 +2,10 @@ import time
 import numpy as np
 import pandas as pd
 import yfinance as yf
+try:
+    import crypto_yfinance as cyf
+except ImportError:
+    crypto_yfinance = None
 from PIL import Image
 import streamlit as st
 import tensorflow as tf
@@ -722,7 +726,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 if __name__ == "__main__":
     
     with st.sidebar:
-        st.write("<h1 style='text-align: left'><b>DASHBOARD PREDIKSI SAHAM 5 PERUSAHAAN BANK TERBESAR DI INDONESIA DENGAN MENGGUNAKAN MODEL CNN-GRU</b></h1>", unsafe_allow_html=True)
+        st.write("<h1 style='text-align: left'><b>DASHBOARD PREDIKSI SAHAM & CRYPTO DENGAN CNN-GRU</b></h1>", unsafe_allow_html=True)
         
         st.write("\n")
         
@@ -787,27 +791,27 @@ if menu_type == "Informasi Umum":
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=2000)
+        st.markdown(html_content, , unsafe_allow_html=True)
         
     elif selected == "Glosarium":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=4000)
+        st.markdown(html_content, , unsafe_allow_html=True)
         
     elif selected == "Metodologi":
         with open('./TEXT/metodologi.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
     
         # Display the HTML content using st.iframe
-        st.iframe(html_content, height=6000)  
+        st.markdown(html_content, , unsafe_allow_html=True)  
         
 if menu_type == "Prediksi Saham":
     
     if selected == "Input Saham Custom":
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
         
         custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
         
