@@ -48,7 +48,7 @@ from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import LambdaCallback
 from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score'''
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
 
             lines = code.split('\n')
             placeholder = st.empty()
