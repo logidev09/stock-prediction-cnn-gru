@@ -58,9 +58,35 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         #Menyimpan Data pada Cache
         @st.cache_data
         def load_data(ticker, start_date, end_date):
-            data = yf.download(ticker, start=start_date, end=end_date)
-            data.reset_index(inplace=True)
-            return data
+            try:
+                # Try crypto first if it looks like a crypto symbol
+                if crypto_yfinance and (ticker.endswith('-USD') or ticker.endswith('-IDR') or ticker in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD']):
+                    data = cyf.download(ticker, start=start_date, end=end_date)
+                else:
+                    # Try as regular stock
+                    data = yf.download(ticker, start=start_date, end=end_date)
+                
+                if data.empty:
+                    st.error(f"Tidak dapat memuat data untuk {ticker}. Silakan coba simbol lain.")
+                    return pd.DataFrame()
+                    
+                data.reset_index(inplace=True)
+                
+                # Ensure we have a Date column
+                if 'Date' not in data.columns and 'Datetime' in data.columns:
+                    data.rename(columns={'Datetime': 'Date'}, inplace=True)
+                elif 'Date' not in data.columns and data.index.name == 'Date':
+                    data['Date'] = data.index
+                    data.reset_index(drop=True, inplace=True)
+                elif 'Date' not in data.columns:
+                    # If no date column exists, create one from index
+                    data['Date'] = data.index
+                    data.reset_index(drop=True, inplace=True)
+                    
+                return data
+            except Exception as e:
+                st.error(f"Error loading data for {ticker}: {str(e)}")
+                return pd.DataFrame()
 
         # DATA HISTORY
         full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d"))
@@ -71,8 +97,20 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write(full_data.tail(1))
 
         # Mengubah index menjadi datetime untuk memudahkan plotting
-        full_data['Date'] = pd.to_datetime(full_data['Date'])
-        full_data.set_index('Date', inplace=True)
+        // Handle Date column - ensure it exists and is datetime
+        if 'Date' not in full_data.columns:
+            if full_data.index.name == 'Date' or full_data.index.name == 'Datetime':
+                full_data.reset_index(inplace=True)
+                if 'Datetime' in full_data.columns:
+                    full_data.rename(columns={'Datetime': 'Date'}, inplace=True)
+            else:
+                full_data['Date'] = full_data.index
+                full_data.reset_index(drop=True, inplace=True)
+        
+        # Ensure Date is datetime
+        if 'Date' in full_data.columns:
+            full_data['Date'] = pd.to_datetime(full_data['Date'])
+            full_data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
         fig1, ax1 = plt.subplots(figsize=(14, 7))
@@ -162,8 +200,19 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         st.write(data.tail(1))
 
         # Mengubah index menjadi datetime untuk data pelatihan
-        data['Date'] = pd.to_datetime(data['Date'])
-        data.set_index('Date', inplace=True)
+        // Handle Date column for training data
+        if 'Date' not in data.columns:
+            if data.index.name == 'Date' or data.index.name == 'Datetime':
+                data.reset_index(inplace=True)
+                if 'Datetime' in data.columns:
+                    data.rename(columns={'Datetime': 'Date'}, inplace=True)
+            else:
+                data['Date'] = data.index
+                data.reset_index(drop=True, inplace=True)
+        
+        if 'Date' in data.columns:
+            data['Date'] = pd.to_datetime(data['Date'])
+            data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data pelatihan
         fig2, ax2 = plt.subplots(figsize=(14, 7))
@@ -574,8 +623,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1])  # Konversi Series ke float
-                        last_forecast_price = float(forecast[-1][0])  # Pastikan ini juga nilai float
+                        last_actual_price = float(data['Close'].iloc[-1]) if isinstance(data['Close'].iloc[-1], (int, float)) else float(data['Close'].iloc[-1].item())  # Extract scalar value
+                        last_forecast_price = float(forecast[-1][0]) if isinstance(forecast[-1][0], (int, float)) else float(forecast[-1][0].item())  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
                         if len(y_test) >= forecast_days:
