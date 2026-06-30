@@ -701,7 +701,20 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 
                 if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
-                    st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
+                    
+                st.subheader("Diagram Alur Kerja")
+                st.markdown("""
+                ```mermaid
+graph TD
+                    A[Input Saham/Crypto] --> B[Pengumpulan Data]
+                    B --> C[Pra-pemrosesan Data]
+                    C --> D[Perancangan Model CNN-GRU]
+                    D --> E[Pelatihan Model]
+                    E --> F[Evaluasi Model]
+                    F --> G[Visualisasi Prediksi]
+                    G --> H[Interpretasi Hasil]
+                ```
+                """)st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
