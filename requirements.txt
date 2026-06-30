@@ -1,6 +1,7 @@
 numpy
 pandas
 yfinance
+crypto-yfinance==1.0.0
 Pillow
 streamlit
 tensorflow
