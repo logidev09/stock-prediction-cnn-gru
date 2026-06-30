@@ -861,6 +861,46 @@ if menu_type == "Prediksi Saham":
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
         
+        
+        
+        # Popular Stock Buttons
+        st.subheader("Pilihan Saham Populer")
+        stock_col1, stock_col2, stock_col3 = st.columns(3)
+        with stock_col1:
+            if st.button("BBCA.JK"):
+                custom_stock = "BBCA.JK"
+            if st.button("BMRI.JK"):
+                custom_stock = "BMRI.JK"
+        with stock_col2:
+            if st.button("AAPL"):
+                custom_stock = "AAPL"
+            if st.button("GOOGL"):
+                custom_stock = "GOOGL"
+        with stock_col3:
+            if st.button("MSFT"):
+                custom_stock = "MSFT"
+            if st.button("TSLA"):
+                custom_stock = "TSLA"
+        
+        # Popular Crypto Buttons
+        st.subheader("Pilihan Crypto Populer")
+        crypto_col1, crypto_col2, crypto_col3 = st.columns(3)
+        with crypto_col1:
+            if st.button("BTC-USD"):
+                custom_stock = "BTC-USD"
+            if st.button("ETH-USD"):
+                custom_stock = "ETH-USD"
+        with crypto_col2:
+            if st.button("SOL-USD"):
+                custom_stock = "SOL-USD"
+            if st.button("BNB-USD"):
+                custom_stock = "BNB-USD"
+        with crypto_col3:
+            if st.button("XRP-USD"):
+                custom_stock = "XRP-USD"
+            if st.button("DOGE-USD"):
+                custom_stock = "DOGE-USD"
+        
         custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
         
         if custom_stock:
