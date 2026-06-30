@@ -18,7 +18,14 @@ from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import LambdaCallback
 from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
+from sklearn.metrics import mean_squared_error, me
+
+# Helper function to safely extract scalar from pandas Series
+    def safe_float(value):
+        if hasattr(value, 'item'):
+            return float(value.item())
+        return float(value)
+an_absolute_percentage_error, r2_score
 
 def main(stock):
     st.header(f"Prediksi Harga Saham dengan kode {stock}")
@@ -77,14 +84,21 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     if 'Datetime' in data.columns:
                         data.rename(columns={'Datetime': 'Date'}, inplace=True)
                     elif data.index.name == 'Date' or data.index.name == 'Datetime':
-                        data['Date'] = data.index
+                        if 'Date' not in data.columns:
+                    data['Date'] = data.index
                         data.reset_index(drop=True, inplace=True)
                     else:
-                        data['Date'] = data.index
+                        if 'Date' not in data.columns:
+                    data['Date'] = data.index
                         data.reset_index(drop=True, inplace=True)
                     
                 # Ensure Date is datetime
                 if 'Date' in data.columns:
+                    if 'Date' in data.columns:
+                    data['Date'] = pd.to_datetime(data['Date'])
+                else:
+                    if 'Date' not in data.columns:
+                    data['Date'] = data.index
                     data['Date'] = pd.to_datetime(data['Date'])
                     
                 return data
@@ -107,12 +121,18 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in full_data.columns:
                     full_data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                full_data['Date'] = full_data.index
+                if 'Date' not in full_data.columns:
+                    full_data['Date'] = full_data.index
                 full_data.reset_index(drop=True, inplace=True)
         
         # Ensure Date is datetime
         if 'Date' in full_data.columns:
-            full_data['Date'] = pd.to_datetime(full_data['Date'])
+            if 'Date' in full_data.columns:
+                    full_data['Date'] = pd.to_datetime(full_data['Date'])
+                else:
+                    if 'Date' not in full_data.columns:
+                    full_data['Date'] = full_data.index
+                    full_data['Date'] = pd.to_datetime(full_data['Date'])
             full_data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
@@ -209,11 +229,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                 if 'Datetime' in data.columns:
                     data.rename(columns={'Datetime': 'Date'}, inplace=True)
             else:
-                data['Date'] = data.index
+                if 'Date' not in data.columns:
+                    data['Date'] = data.index
                 data.reset_index(drop=True, inplace=True)
         
         if 'Date' in data.columns:
-            data['Date'] = pd.to_datetime(data['Date'])
+            if 'Date' in data.columns:
+                    data['Date'] = pd.to_datetime(data['Date'])
+                else:
+                    if 'Date' not in data.columns:
+                    data['Date'] = data.index
+                    data['Date'] = pd.to_datetime(data['Date'])
             data.set_index('Date', inplace=True)
 
         # Membuat chart dengan matplotlib untuk data pelatihan
@@ -625,7 +651,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                         st.pyplot(fig)
 
                         # Data Line untuk grafik
-                        last_actual_price = float(data['Close'].iloc[-1].item()) if hasattr(data['Close'].iloc[-1], 'item') else float(data['Close'].iloc[-1])  # Extract scalar value
+                        last_actual_price = safe_float(data['Close'].iloc[-1])
                         last_forecast_price = float(forecast[-1][0].item()) if hasattr(forecast[-1][0], 'item') else float(forecast[-1][0])  # Extract scalar value
                         percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
@@ -651,7 +677,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                                 st.metric("MAPE", f"{mape:.3f}")
                                 # Menampilkan tabel perbandingan
                                 with st.popover("Tampilkan Tabel"):
-                                    st.dataframe(table_df, width="stretch")
+                                    st.dataframe(table_df)
                             with col2:
                                 st.metric("RMSE", f"{rmse:.3f}")
                                 st.metric("R2 Score", f"{r2:.3f}")
