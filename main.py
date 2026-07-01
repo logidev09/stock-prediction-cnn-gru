@@ -48,7 +48,7 @@ from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import LambdaCallback
 from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score'''
 
             lines = code.split('\n')
             placeholder = st.empty()
@@ -644,7 +644,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                                 st.metric("MAPE", f"{mape:.3f}")
                                 # Menampilkan tabel perbandingan
                                 with st.popover("Tampilkan Tabel"):
-                                    st.dataframe(
+                                    st.dataframe(table_df)
                             with col2:
                                 st.metric("RMSE", f"{rmse:.3f}")
                                 st.metric("R2 Score", f"{r2:.3f}")
