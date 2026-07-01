@@ -854,56 +854,139 @@ if menu_type == "Informasi Umum":
 if menu_type == "Prediksi Saham":
     
     if selected == "Input Saham Custom":
+        if 'custom_stock_input' not in st.session_state:
+            st.session_state.custom_stock_input = ""
+
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
         
+        # Popular Indonesia Stock Buttons
+        st.write("**Pilihan Saham Indonesia Populer**")
+        ind_cols = st.columns(4)
+        with ind_cols[0]:
+            if st.button("BBCA.JK", key="btn_bbca"):
+                st.session_state.custom_stock_input = "BBCA.JK"
+                st.rerun()
+        with ind_cols[1]:
+            if st.button("BMRI.JK", key="btn_bmri"):
+                st.session_state.custom_stock_input = "BMRI.JK"
+                st.rerun()
+        with ind_cols[2]:
+            if st.button("BBNI.JK", key="btn_bbni"):
+                st.session_state.custom_stock_input = "BBNI.JK"
+                st.rerun()
+        with ind_cols[3]:
+            if st.button("BRIS.JK", key="btn_bris"):
+                st.session_state.custom_stock_input = "BRIS.JK"
+                st.rerun()
         
+        # Popular Global Stock Buttons
+        st.write("**Pilihan Saham Global Populer**")
+        glob_cols1 = st.columns(4)
+        with glob_cols1[0]:
+            if st.button("AAPL", key="btn_aapl"):
+                st.session_state.custom_stock_input = "AAPL"
+                st.rerun()
+        with glob_cols1[1]:
+            if st.button("GOOGL", key="btn_googl"):
+                st.session_state.custom_stock_input = "GOOGL"
+                st.rerun()
+        with glob_cols1[2]:
+            if st.button("MSFT", key="btn_msft"):
+                st.session_state.custom_stock_input = "MSFT"
+                st.rerun()
+        with glob_cols1[3]:
+            if st.button("TSLA", key="btn_tsla"):
+                st.session_state.custom_stock_input = "TSLA"
+                st.rerun()
         
-        # Popular Stock Buttons
-        st.subheader("Pilihan Saham Populer")
-        stock_col1, stock_col2, stock_col3 = st.columns(3)
-        with stock_col1:
-            if st.button("BBCA.JK"):
-                custom_stock = "BBCA.JK"
-            if st.button("BMRI.JK"):
-                custom_stock = "BMRI.JK"
-            if st.button("AAPL"):
-                custom_stock = "AAPL"
-        with stock_col2:
-            if st.button("GOOGL"):
-                custom_stock = "GOOGL"
-            if st.button("MSFT"):
-                custom_stock = "MSFT"
-            if st.button("BBNI.JK"):
-                custom_stock = "BBNI.JK"
-        with stock_col3:
-            if st.button("TSLA"):
-                custom_stock = "TSLA"
-            if st.button("AMZN"):
-                custom_stock = "AMZN"
-            if st.button("BRIS.JK"):
-                custom_stock = "BRIS.JK"
+        glob_cols2 = st.columns(4)
+        with glob_cols2[0]:
+            if st.button("AMZN", key="btn_amzn"):
+                st.session_state.custom_stock_input = "AMZN"
+                st.rerun()
+        with glob_cols2[1]:
+            if st.button("NVDA", key="btn_nvda"):
+                st.session_state.custom_stock_input = "NVDA"
+                st.rerun()
+        with glob_cols2[2]:
+            if st.button("META", key="btn_meta"):
+                st.session_state.custom_stock_input = "META"
+                st.rerun()
+        with glob_cols2[3]:
+            if st.button("NFLX", key="btn_nflx"):
+                st.session_state.custom_stock_input = "NFLX"
+                st.rerun()
         
         # Popular Crypto Buttons
-        st.subheader("Pilihan Crypto Populer")
-        crypto_col1, crypto_col2, crypto_col3 = st.columns(3)
-        with crypto_col1:
-            if st.button("BTC-USD"):
-                custom_stock = "BTC-USD"
-            if st.button("ETH-USD"):
-                custom_stock = "ETH-USD"
-        with crypto_col2:
-            if st.button("SOL-USD"):
-                custom_stock = "SOL-USD"
-            if st.button("BNB-USD"):
-                custom_stock = "BNB-USD"
-        with crypto_col3:
-            if st.button("XRP-USD"):
-                custom_stock = "XRP-USD"
-            if st.button("DOGE-USD"):
-                custom_stock = "DOGE-USD"
+        st.write("**Pilihan Crypto Populer (Global)**")
+        crypto_cols1 = st.columns(4)
+        with crypto_cols1[0]:
+            if st.button("BTC-USD", key="btn_btc"):
+                st.session_state.custom_stock_input = "BTC-USD"
+                st.rerun()
+        with crypto_cols1[1]:
+            if st.button("ETH-USD", key="btn_eth"):
+                st.session_state.custom_stock_input = "ETH-USD"
+                st.rerun()
+        with crypto_cols1[2]:
+            if st.button("SOL-USD", key="btn_sol"):
+                st.session_state.custom_stock_input = "SOL-USD"
+                st.rerun()
+        with crypto_cols1[3]:
+            if st.button("BNB-USD", key="btn_bnb"):
+                st.session_state.custom_stock_input = "BNB-USD"
+                st.rerun()
         
-        custom_stock = st.text_input("Masukkan Kode Saham", placeholder="Contoh: BMRI.JK")
+        crypto_cols2 = st.columns(4)
+        with crypto_cols2[0]:
+            if st.button("XRP-USD", key="btn_xrp"):
+                st.session_state.custom_stock_input = "XRP-USD"
+                st.rerun()
+        with crypto_cols2[1]:
+            if st.button("DOGE-USD", key="btn_doge"):
+                st.session_state.custom_stock_input = "DOGE-USD"
+                st.rerun()
+        with crypto_cols2[2]:
+            if st.button("ADA-USD", key="btn_ada"):
+                st.session_state.custom_stock_input = "ADA-USD"
+                st.rerun()
+        with crypto_cols2[3]:
+            if st.button("DOT-USD", key="btn_dot"):
+                st.session_state.custom_stock_input = "DOT-USD"
+                st.rerun()
+        
+        # yFinance Ticker Guidelines Expander (Closed by default)
+        with st.expander("💡 Ketentuan & Tips Penulisan Ticker yFinance", expanded=False):
+            st.markdown("""
+            **Ketentuan Penulisan Ticker yFinance:**
+            
+            1. **Saham Indonesia (IHSG)**:
+               Khusus untuk saham di Bursa Efek Indonesia, tambahkan akhiran **`.JK`** (misalnya: `BBCA.JK`, `BMRI.JK`, `BBNI.JK`, `BRIS.JK`).
+               
+            2. **Saham Global (AS/S&P 500)**:
+               Mengikuti kode ticker standar bursa AS (misalnya: `AAPL`, `GOOGL`, `MSFT`, `TSLA`, `AMZN`). 
+               Referensi lengkap dapat dilihat di [Daftar Perusahaan S&P 500](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies).
+               
+            3. **Cryptocurrency**:
+               Untuk aset crypto, gunakan kode koin diikuti dengan akhiran **`-USD`** (misalnya: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`).
+            """)
+        
+        st.write("")
+        st.markdown("**Masukkan Kode Saham/Crypto**")
+        col_input, col_btn = st.columns([5, 1])
+        with col_input:
+            custom_stock = st.text_input(
+                "Masukkan Kode Saham", 
+                value=st.session_state.custom_stock_input, 
+                placeholder="Contoh: BMRI.JK", 
+                label_visibility="collapsed"
+            )
+        with col_btn:
+            st.button("Enter 🔍", type="primary", use_container_width=True)
+            
+        if custom_stock != st.session_state.custom_stock_input:
+            st.session_state.custom_stock_input = custom_stock
         
         if custom_stock:
             st.cache_data.clear()

@@ -36,6 +36,9 @@
 <body>
 
 <h1><b>Gambaran Umum Aplikasi</b></h1>
+<p style="font-size: 1.1em; font-style: italic; color: #555; margin-bottom: 20px;">
+    Portofolio ini dibuat oleh Ilham Rizkyansyah &middot; Universitas Gunadarma Informatika
+</p>
 <p><strong>Selamat datang</strong> di aplikasi prediksi saham bank-bank terkemuka di Indonesia. Aplikasi ini menyajikan analisis dan prediksi untuk saham dari lima bank terbesar di Indonesia:</p>
 <ul>
     <li>PT Bank Central Asia Tbk (BCA)</li>
