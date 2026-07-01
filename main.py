@@ -769,6 +769,16 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 # Pengguna memilih bank yang ingin dianalisis dari sidebar Streamlit. Pilihan bank termasuk BCA, BRI, Bank Mandiri, BNI, dan BSI.            
 if __name__ == "__main__":
     
+    # Check programmatic redirection
+    manual_select_type = None
+    if st.session_state.get('redirect_to_input_custom', False):
+        st.session_state.menu_type_index = 1
+        manual_select_type = 1
+        st.session_state.redirect_to_input_custom = False
+        
+    if 'menu_type_index' not in st.session_state:
+        st.session_state.menu_type_index = 0
+
     with st.sidebar:
         st.write("<h1 style='text-align: left'><b>DASHBOARD PREDIKSI SAHAM & CRYPTO DENGAN CNN-GRU</b></h1>", unsafe_allow_html=True)
         
@@ -781,27 +791,56 @@ if __name__ == "__main__":
             menu_title=None,
             options=["Informasi Umum", "Prediksi Saham"],
             icons=["info-circle", "graph-up"],
-            default_index=0,
+            default_index=st.session_state.menu_type_index,
+            manual_select=manual_select_type,
             orientation="horizontal"
         )
         
+        # Sync menu_type_index to avoid sticking
+        menu_type_options = ["Informasi Umum", "Prediksi Saham"]
+        if menu_type in menu_type_options:
+            st.session_state.menu_type_index = menu_type_options.index(menu_type)
+        
         if menu_type == "Informasi Umum":
+            if 'selected_index_info' not in st.session_state:
+                st.session_state.selected_index_info = 0
+                
             selected = option_menu(
                 menu_title=None,
                 options=["Gambaran Umum", "Glosarium", "Metodologi"],
                 icons=["house", "book", "pen"],
-                default_index=0,
+                default_index=st.session_state.selected_index_info,
                 orientation="vertikal"
             )
             
+            # Sync selection back
+            info_options = ["Gambaran Umum", "Glosarium", "Metodologi"]
+            if selected in info_options:
+                st.session_state.selected_index_info = info_options.index(selected)
+            
         elif menu_type == "Prediksi Saham":
+            manual_select_pred = None
+            if st.session_state.get('redirect_to_input_custom_pred', False):
+                st.session_state.selected_index_pred = 0
+                manual_select_pred = 0
+                st.session_state.redirect_to_input_custom_pred = False
+                
+            if 'selected_index_pred' not in st.session_state:
+                st.session_state.selected_index_pred = 0
+                
             selected = option_menu(
                 menu_title=None,
                 options=["Input Saham Custom", "PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"],
                 icons=["search", "bank", "bank", "bank", "bank", "bank"],
-                default_index=0,
+                default_index=st.session_state.selected_index_pred,
+                manual_select=manual_select_pred,
                 orientation="vertikal"
             )
+            
+            # Sync selection back
+            pred_options = ["Input Saham Custom", "PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"]
+            if selected in pred_options:
+                st.session_state.selected_index_pred = pred_options.index(selected)
             
         # Menampilkan Manual
         st.markdown('**Manual**')
@@ -834,8 +873,25 @@ if menu_type == "Informasi Umum":
         with open('./TEXT/gambaran_umum.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
-        # Display the HTML content using st.iframe
-        st.markdown(html_content, unsafe_allow_html=True)
+        # Split after the portfolio paragraph and inject redirect button
+        target_marker = "Portofolio ini dibuat oleh Ilham Rizkyansyah &middot; Universitas Gunadarma Informatika"
+        if target_marker in html_content:
+            parts = html_content.split(target_marker)
+            subparts = parts[1].split("</p>", 1)
+            
+            # Display first part up to the paragraph close tag
+            st.markdown(parts[0] + target_marker + subparts[0] + "</p>", unsafe_allow_html=True)
+            
+            # Display shortcut button
+            if st.button("👉 Klik di sini untuk melakukan forecasting langsung", type="primary", use_container_width=True):
+                st.session_state.redirect_to_input_custom = True
+                st.session_state.redirect_to_input_custom_pred = True
+                st.rerun()
+            
+            # Display remaining markdown content
+            st.markdown(subparts[1], unsafe_allow_html=True)
+        else:
+            st.markdown(html_content, unsafe_allow_html=True)
         
     elif selected == "Glosarium":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
@@ -859,6 +915,7 @@ if menu_type == "Prediksi Saham":
 
         st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
+        st.info("💡 **Tips:** Silakan scroll ke bawah halaman untuk melakukan forecasting/prediksi setelah memilih atau memasukkan kode saham.")
         
         # Popular Indonesia Stock Buttons
         st.write("**Pilihan Saham Indonesia Populer**")
