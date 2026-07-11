@@ -515,7 +515,15 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     })
                     st.dataframe(comparison_df)
 
-                if isinstance(rmse, (int, float)):
+                accuracy = 100 - mape * 100
+                if accuracy < 0:
+                    if accuracy >= -50:
+                        st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
+                    elif accuracy >= -100:
+                        st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                    else:
+                        st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                elif isinstance(rmse, (int, float)):
                     if rmse < 50:
                         st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
                     elif rmse < 90:
@@ -672,7 +680,14 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                             with col2:
                                 st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
 
-                            if rmse < 50:
+                            if accuracy < 0:
+                                if accuracy >= -50:
+                                    st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
+                                elif accuracy >= -100:
+                                    st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                                else:
+                                    st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                            elif rmse < 50:
                                 st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
                             elif rmse < 90:
                                 st.success('Performa: Baik', icon=":material/thumb_up:")
@@ -732,7 +747,15 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 
                     st.write(interpretation)
 
-                    if rmse < 50:
+                    accuracy = 100 - mape * 100
+                    if accuracy < 0:
+                        if accuracy >= -50:
+                            st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
+                        elif accuracy >= -100:
+                            st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                        else:
+                            st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                    elif rmse < 50:
                         st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
                     elif rmse < 90:
                         st.success('Performa: Baik', icon=":material/thumb_up:")
