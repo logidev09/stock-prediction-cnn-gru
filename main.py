@@ -27,6 +27,18 @@ def safe_float(value):
     return float(value)
 
 def main(stock):
+    if 'current_stock' not in st.session_state:
+        st.session_state.current_stock = ""
+    if 'training_completed' not in st.session_state:
+        st.session_state.training_completed = False
+
+    if st.session_state.current_stock != stock:
+        if st.session_state.training_completed:
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.session_state.training_completed = False
+        st.session_state.current_stock = stock
+
     st.header(f"Prediksi Harga Saham dengan kode {stock}")
 
     with st.expander("1. Persiapan Lingkungan"):
@@ -461,6 +473,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     end_time = time.time()
                     training_time = end_time - start_time
                     st.success(f"Pelatihan Model selesai! Waktu komputasi total: {training_time:.2f} detik")
+                    st.session_state.training_completed = True
 
                 # Menambahkan nilai default untuk ketika tombol sudah ditekan
                 btn_check = 1
