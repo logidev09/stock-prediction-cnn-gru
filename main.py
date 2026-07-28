@@ -154,11 +154,11 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         if stock == "BBCA.JK" or stock == "BMRI.JK" or stock == "BBNI.JK":
             use_days = st.checkbox("Gunakan jumlah hari terakhir")
             if use_days:
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=360*24, value=1800)
+                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=1800)
 
             else:
                 # Membuat Slider untuk memilih data Pelatihan
-                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 24, 5)
+                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
                 months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
 
                 # Menghitung total bulan dan tanggal mulai
@@ -167,17 +167,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 
             with st.popover("Tips Memilih Data Pelatihan"):
                 st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
-                st.warning('Ket: Secara Default menggunakan 5 Tahun atau 1800 hari yang lalu, yang hanya dapat melakukan prediksi hingga 7 Bulan kedepan.', icon=":material/pan_tool_alt:")
+                st.warning('Ket: Secara Default menggunakan 4 Tahun atau 1440 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
                 st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
 
         else:
             use_days = st.checkbox("Gunakan jumlah hari terakhir")
             if use_days:
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=360*24, value=1470)
+                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=1470)
 
             else:
                 # Membuat Slider untuk memilih data Pelatihan
-                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 24, 4)
+                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
                 months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 1)
 
                 # Menghitung total bulan dan tanggal mulai
@@ -197,8 +197,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         start_date = start_date.strftime("%Y-%m-%d")
         end_date = end_date.strftime("%Y-%m-%d")
 
-        st.write(f"Jumlah Hari yang dipilih **{days}**.")
-
         # Load data sesuai dengan rentang yang dipilih
         @st.cache_data
         def load_training_data(stock, start_date, end_date):
@@ -212,14 +210,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
             data = load_training_data(stock, start_date, end_date)
         # hingga ini
 
-        st.subheader("Data Pelatihan yang telah dipilih")
-        st.write(data.head(1))
-        st.write("Hingga")
-        st.write(data.tail(1))
-
         # Mengubah index menjadi datetime untuk data pelatihan
         data['Date'] = pd.to_datetime(data['Date'])
         data.set_index('Date', inplace=True)
+
+        actual_days = (data.index[-1] - data.index[0]).days if not data.empty else 0
+
+        st.subheader("Data Pelatihan yang telah dipilih")
+        st.write(f"Jumlah Hari yang dipilih **{actual_days}**.")
+        st.write(data.head(1))
+        st.write("Hingga")
+        st.write(data.tail(1))
 
         # Membuat chart dengan matplotlib untuk data pelatihan
         fig2, ax2 = plt.subplots(figsize=(14, 7))
@@ -516,7 +517,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
                     st.dataframe(comparison_df)
 
                 accuracy = 100 - mape * 100
-                if accuracy < 0:
+                if round(rmse, 3) == 0.0:
+                    st.warning('Terjadi kesalahan: Nilai RMSE bernilai 0.000 (Model tidak memprediksi variasi data dengan baik). Silahkan pilih epoch yang lebih besar atau menggunakan Jumlah Data Pelatihan yang lebih banyak, lalu lakukan kembali Pelatihan Model', icon=":material/exclamation:")
+                elif accuracy < 0:
                     if accuracy >= -50:
                         st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
                     elif accuracy >= -100:
@@ -592,7 +595,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 
         if btn_check == 1:
 
-            if mape < 0.1:
+            if round(rmse, 3) > 0:
 
                 start_time = time.time()
                 progress_bar = st.progress(0)
@@ -720,7 +723,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         # Mengecek apakah sudah menekan tombol Latih Model
         if btn_check == 1:
 
-            if mape < 0.1:
+            if round(rmse, 3) > 0:
                 
                 if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
