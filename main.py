@@ -122,6 +122,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d"))
 
         st.subheader("Data keseluruhan")
+        st.write("Mulai")
         st.write(full_data.head(1))
         st.write("Hingga")
         st.write(full_data.tail(1))
@@ -150,52 +151,77 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 
         # DATA PELATIHAN
         # Pilihan untuk input jumlah data pelatihan
+        st.subheader("Pengaturan Data Pelatihan")
 
-        if stock == "BBCA.JK" or stock == "BMRI.JK" or stock == "BBNI.JK":
-            use_days = st.checkbox("Gunakan jumlah hari terakhir")
-            if use_days:
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=1800)
+        method_options = ["Rentang Tahun / Bulan / Hari", "Gunakan Jumlah Hari Terakhir", "Pilih Tanggal dengan Kalender"]
+        selected_method = st.radio(
+            "Pilihan Metode Memilih Data Pelatihan:",
+            options=method_options,
+            index=0
+        )
 
-            else:
-                # Membuat Slider untuk memilih data Pelatihan
+        end_date_obj = date.today()
+
+        if selected_method == "Rentang Tahun / Bulan / Hari":
+            col_y, col_m, col_d = st.columns(3)
+            with col_y:
                 years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
-                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
+            with col_m:
+                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1)
+            with col_d:
+                days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 31, 0)
+            
+            days = (years_ago * 365) + (months_ago * 30) + days_ago
+            if days < 120:
+                days = 120
+            start_date_obj = end_date_obj - timedelta(days=days)
 
-                # Menghitung total bulan dan tanggal mulai
-                total_months = years_ago * 12 + months_ago
-                days = total_months*30
+        elif selected_method == "Gunakan Jumlah Hari Terakhir":
+            default_val = 1800 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1470
+            days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val)
+            start_date_obj = end_date_obj - timedelta(days=days)
 
-            with st.popover("Tips Memilih Data Pelatihan"):
-                st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
-                st.warning('Ket: Secara Default menggunakan 4 Tahun atau 1440 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
-                st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
+        else: # "Pilih Tanggal dengan Kalender"
+            default_start = date.today() - timedelta(days=1470) # 1470 hari yang lalu (sekitar 4 tahun 1 bulan yang lalu)
+            
+            col_cal1, col_cal2 = st.columns(2)
+            with col_cal1:
+                start_date_selected = st.date_input(
+                    "Tanggal Mulai Pelatihan",
+                    value=default_start,
+                    min_value=date(2000, 1, 1),
+                    max_value=date.today()
+                )
+            with col_cal2:
+                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
+                if use_today_end:
+                    end_date_selected = date.today()
+                else:
+                    end_date_selected = st.date_input(
+                        "Tanggal Selesai Pelatihan",
+                        value=date.today(),
+                        min_value=start_date_selected,
+                        max_value=date.today()
+                    )
+            
+            with st.expander("💡 Tips Memilih Tanggal dengan Kalender", expanded=False):
+                st.info("Secara default, tanggal mulai diset ke 1470 hari yang lalu (sekitar 4 Tahun 1 Bulan) dan tanggal selesai diset ke tanggal terbaru.")
+                st.warning("Pastikan rentang tanggal yang dipilih minimal 120 hari agar memenuhi syarat pelatihan model.")
 
-        else:
-            use_days = st.checkbox("Gunakan jumlah hari terakhir")
-            if use_days:
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=1470)
+            start_date_obj = start_date_selected
+            end_date_obj = end_date_selected
+            days = (end_date_obj - start_date_obj).days
+            if days < 120:
+                days = 120
 
-            else:
-                # Membuat Slider untuk memilih data Pelatihan
-                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
-                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 1)
-
-                # Menghitung total bulan dan tanggal mulai
-                total_months = years_ago * 12 + months_ago
-                days = total_months*30
-
-            with st.popover("Tips Memilih Data Pelatihan"):
-                st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
-                st.warning('Ket: Secara Default menggunakan 4 Tahun 1 Bulan atau 1470 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
-                st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
-
-        # Menjadikan hari terkahir adalah hari ini
-        end_date = date.today()
+        with st.popover("Tips Memilih Data Pelatihan"):
+            st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
+            st.warning('Ket: Secara Default menggunakan 4 Tahun 1 Bulan atau 1470 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
+            st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
 
         # Mengubah Format Tanggal data Pelatihan
-        start_date = end_date - timedelta(days)
-        start_date = start_date.strftime("%Y-%m-%d")
-        end_date = end_date.strftime("%Y-%m-%d")
+        start_date = start_date_obj.strftime("%Y-%m-%d")
+        end_date = end_date_obj.strftime("%Y-%m-%d")
 
         # Load data sesuai dengan rentang yang dipilih
         @st.cache_data
@@ -214,10 +240,20 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         data['Date'] = pd.to_datetime(data['Date'])
         data.set_index('Date', inplace=True)
 
-        actual_days = (data.index[-1] - data.index[0]).days if not data.empty else 0
+        if not data.empty:
+            actual_days = (data.index[-1] - data.index[0]).days
+            y_cnt = actual_days // 365
+            rem_days = actual_days % 365
+            m_cnt = rem_days // 30
+            d_cnt = rem_days % 30
+            duration_str = f"{y_cnt} Tahun {m_cnt} Bulan {d_cnt} Hari"
+        else:
+            actual_days = 0
+            duration_str = "0 Tahun 0 Bulan 0 Hari"
 
         st.subheader("Data Pelatihan yang telah dipilih")
-        st.write(f"Jumlah Hari yang dipilih **{actual_days}**.")
+        st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
+        st.write("Mulai")
         st.write(data.head(1))
         st.write("Hingga")
         st.write(data.tail(1))
@@ -595,213 +631,203 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
 
         if btn_check == 1:
 
-            if round(rmse, 3) > 0:
+            start_time = time.time()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            time_estimate = st.empty()
 
-                start_time = time.time()
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                time_estimate = st.empty()
+            with st.spinner('Sedang Melakukan prediksi dan perhitungan metrik... Harap tunggu.'):
 
-                with st.spinner('Sedang Melakukan prediksi dan perhitungan metrik... Harap tunggu.'):
+                for i, forecast_period in enumerate(selected_periods):
 
-                    for i, forecast_period in enumerate(selected_periods):
+                    forecast_days = forecast_options_dict[forecast_period]
+                    last_sequence = x_test[-1]
+                    forecast = forecast_future(model, last_sequence, scaler, forecast_days)
 
-                        forecast_days = forecast_options_dict[forecast_period]
-                        last_sequence = x_test[-1]
-                        forecast = forecast_future(model, last_sequence, scaler, forecast_days)
+                    progress = (i + 1) / len(selected_periods)
+                    progress_bar.progress(progress)
 
-                        progress = (i + 1) / len(selected_periods)
-                        progress_bar.progress(progress)
+                    elapsed_time = time.time() - start_time
+                    estimated_total_time = elapsed_time / progress
+                    remaining_time = estimated_total_time - elapsed_time
 
-                        elapsed_time = time.time() - start_time
-                        estimated_total_time = elapsed_time / progress
-                        remaining_time = estimated_total_time - elapsed_time
+                    # Menghitung Estimasi waktu
+                    time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
+                    last_date = data.index[-1]
+                    date_range = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
 
-                        # Menghitung Estimasi waktu
-                        time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
-                        last_date = data.index[-1]
-                        date_range = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
+                    st.subheader(f"Prediksi untuk {forecast_period}:")
+                    fig, ax = plt.subplots(figsize=(10, 6))
 
-                        st.subheader(f"Prediksi untuk {forecast_period}:")
-                        fig, ax = plt.subplots(figsize=(10, 6))
+                    # Determine the appropriate start index for plotting
+                    start_idx = -(forecast_days*3)
 
-                        # Determine the appropriate start index for plotting
-                        start_idx = -(forecast_days*3)
+                    ax.plot(data.index[start_idx:], data['Close'].values[start_idx:], label='Harga Aktual', color='#D6C36B')
+                    ax.plot(actual_dates[start_idx:], y_pred[start_idx:], label='Harga Pengujian', color='#B16ED0')
+                    ax.plot(date_range, forecast, label='Harga Prediksi', color='#107EDE')
+                    ax.set_xlabel('Tanggal')
+                    ax.set_ylabel('Harga Saham')
+                    ax.legend()
 
-                        ax.plot(data.index[start_idx:], data['Close'].values[start_idx:], label='Harga Aktual', color='#D6C36B')
-                        ax.plot(actual_dates[start_idx:], y_pred[start_idx:], label='Harga Pengujian', color='#B16ED0')
-                        ax.plot(date_range, forecast, label='Harga Prediksi', color='#107EDE')
-                        ax.set_xlabel('Tanggal')
-                        ax.set_ylabel('Harga Saham')
-                        ax.legend()
+                    # Format x-axis
+                    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b-%d'))
+                    plt.tight_layout()
+                    st.pyplot(fig)
 
-                        # Format x-axis
-                        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%b-%d'))
-                        plt.tight_layout()
-                        st.pyplot(fig)
+                    # Data Line untuk grafik
+                    last_actual_price = safe_float(data['Close'].iloc[-1])  # Extract scalar value safely
+                    last_forecast_price = safe_float(forecast[-1][0])  # Extract scalar value safely
+                    percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
 
-                        # Data Line untuk grafik
-                        last_actual_price = safe_float(data['Close'].iloc[-1])  # Extract scalar value safely
-                        last_forecast_price = safe_float(forecast[-1][0])  # Extract scalar value safely
-                        percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
+                    if len(y_test) >= forecast_days:
 
-                        if len(y_test) >= forecast_days:
+                        st.subheader("Tabel dan Metrik Performa:")
 
-                            st.subheader("Tabel dan Metrik Performa:")
+                        table_df = pd.DataFrame({
+                                    'Tanggal': date_range.strftime('%Y-%b-%d'),
+                                    'Harga Prediksi': forecast.flatten().round(2)
+                                })
 
-                            table_df = pd.DataFrame({
-                                        'Tanggal': date_range.strftime('%Y-%b-%d'),
-                                        'Harga Prediksi': forecast.flatten().round(2)
-                                    })
+                        # Calculate metrics
+                        mse = mean_squared_error(y_test[:forecast_days], y_pred[:forecast_days])
+                        rmse = np.sqrt(mse)
+                        r2 = r2_score(y_test[:forecast_days], y_pred[:forecast_days])
+                        mape = mean_absolute_percentage_error(y_test[:forecast_days], y_pred[:forecast_days])
+                        accuracy = 100 - mape * 100
 
-                            # Calculate metrics
-                            mse = mean_squared_error(y_test[:forecast_days], y_pred[:forecast_days])
-                            rmse = np.sqrt(mse)
-                            r2 = r2_score(y_test[:forecast_days], y_pred[:forecast_days])
-                            mape = mean_absolute_percentage_error(y_test[:forecast_days], y_pred[:forecast_days])
-                            accuracy = 100 - mape * 100
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("MSE", f"{mse:.3f}")
+                            st.metric("MAPE", f"{mape:.3f}")
+                            # Menampilkan tabel perbandingan
+                            with st.popover("Tampilkan Tabel"):
+                                st.dataframe(table_df)
+                        with col2:
+                            st.metric("RMSE", f"{rmse:.3f}")
+                            st.metric("R2 Score", f"{r2:.3f}")
 
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("MSE", f"{mse:.3f}")
-                                st.metric("MAPE", f"{mape:.3f}")
-                                # Menampilkan tabel perbandingan
-                                with st.popover("Tampilkan Tabel"):
-                                    st.dataframe(table_df)
-                            with col2:
-                                st.metric("RMSE", f"{rmse:.3f}")
-                                st.metric("R2 Score", f"{r2:.3f}")
+                            st.metric("Akurasi", f"{accuracy:.3f}%")
 
-                                st.metric("Akurasi", f"{accuracy:.3f}%")
+                        st.subheader("Ringkasan Prediksi")
 
-                            st.subheader("Ringkasan Prediksi")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
+                        with col2:
+                            st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
 
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
-                            with col2:
-                                st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
-
-                            if accuracy < 0:
-                                if accuracy >= -50:
-                                    st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
-                                elif accuracy >= -100:
-                                    st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                                else:
-                                    st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                            elif rmse < 50:
-                                st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
-                            elif rmse < 90:
-                                st.success('Performa: Baik', icon=":material/thumb_up:")
-                            elif rmse < 130:
-                                st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
-                            elif rmse < 170:
-                                st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
-                            elif rmse < 210:
-                                st.error('Performa: Buruk', icon=":material/thumb_down:")
+                        if accuracy < 0:
+                            if accuracy >= -50:
+                                st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
+                            elif accuracy >= -100:
+                                st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
                             else:
-                                st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
-
+                                st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                        elif rmse < 50:
+                            st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
+                        elif rmse < 90:
+                            st.success('Performa: Baik', icon=":material/thumb_up:")
+                        elif rmse < 130:
+                            st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
+                        elif rmse < 170:
+                            st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
+                        elif rmse < 210:
+                            st.error('Performa: Buruk', icon=":material/thumb_down:")
                         else:
-                            st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali jumlah hari pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
+                            st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
 
-                        st.write("---")
+                    else:
+                        st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali jumlah hari pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
 
-                end_time = time.time()
+                    st.write("---")
 
-                st.success(f"Prediksi dan perhitungan metrik selesai! Waktu komputasi total: {end_time - start_time:.2f} detik")
+            end_time = time.time()
 
-            else:
-                st.warning("Silahkan pilih epoch yang lebih besar atau mengggunakan Jumlah Data Pelatihan yang lebih banyak, lalu lakukan kembali Pelatihan Model", icon=":material/exclamation:")
+            st.success(f"Prediksi dan perhitungan metrik selesai! Waktu komputasi total: {end_time - start_time:.2f} detik")
 
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
 
-    with st.expander("9. Interpretasi dan Pelaporan Hasil", True):
+    with st.expander("8. Interpretasi dan Pelaporan Hasil", True):
 
         # Mengecek apakah sudah menekan tombol Latih Model
         if btn_check == 1:
 
-            if round(rmse, 3) > 0:
-                
-                if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
+            if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
-                    st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
-                    with col2:
-                        st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
+                st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
+                with col2:
+                    st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
 
-                    def interpret_forecast(percent_change):
-                        if percent_change < -20:
-                            return "Tren harga saham diprediksi akan sangat turun 🔴."
-                        elif percent_change < -5:
-                            return "Tren harga saham diprediksi akan turun 🟠."
-                        elif percent_change < 5:
-                            return "Harga saham diprediksi akan stabil ⚫."
-                        elif percent_change < 20:
-                            return "Tren harga saham diprediksi akan naik 🟡."
-                        else:
-                            return "Tren harga saham diprediksi akan sangat naik 🟢."
-
-                    interpretation = interpret_forecast(percent_change)
-
-                    st.write(interpretation)
-
-                    accuracy = 100 - mape * 100
-                    if accuracy < 0:
-                        if accuracy >= -50:
-                            st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
-                        elif accuracy >= -100:
-                            st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                        else:
-                            st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                    elif rmse < 50:
-                        st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
-                    elif rmse < 90:
-                        st.success('Performa: Baik', icon=":material/thumb_up:")
-                    elif rmse < 130:
-                        st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
-                    elif rmse < 170:
-                        st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
-                    elif rmse < 210:
-                        st.error('Performa: Buruk', icon=":material/thumb_down:")
+                def interpret_forecast(percent_change):
+                    if percent_change < -20:
+                        return "Tren harga saham diprediksi akan sangat turun 🔴."
+                    elif percent_change < -5:
+                        return "Tren harga saham diprediksi akan turun 🟠."
+                    elif percent_change < 5:
+                        return "Harga saham diprediksi akan stabil ⚫."
+                    elif percent_change < 20:
+                        return "Tren harga saham diprediksi akan naik 🟡."
                     else:
-                        st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
+                        return "Tren harga saham diprediksi akan sangat naik 🟢."
 
-                    # Fungsi tambahan untuk analisis dan rekomendasi
-                    def analyze_market_trends(data, forecast):
-                        # Implementasi analisis tren pasar
-                        # Contoh sederhana:
-                        recent_trend = "bullish" if data['Close'].pct_change().mean().item() > 0 else "bearish"
-                        forecast_trend = "naik" if forecast[-1] > forecast[0] else "turun"
-                        return f"Tren pasar terkini cenderung {recent_trend}. Berdasarkan prediksi, harga saham diperkirakan akan {forecast_trend} dalam periode mendatang."
+                interpretation = interpret_forecast(percent_change)
 
-                    def generate_recommendation(percent_change, accuracy):
-                        if accuracy > 80:
-                            return "Prediksi menunjukkan penurunan yang signifikan dengan tingkat akurasi yang tinggi. Waspadai risiko dan pertimbangkan untuk mengurangi eksposur atau melakukan hedging."
-                        else:
-                            return "Prediksi menunjukkan pergerakan moderat. Pantau perkembangan pasar dan lakukan analisis lebih lanjut sebelum mengambil keputusan."
+                st.write(interpretation)
+
+                accuracy = 100 - mape * 100
+                if accuracy < 0:
+                    if accuracy >= -50:
+                        st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
+                    elif accuracy >= -100:
+                        st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                    else:
+                        st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
+                elif rmse < 50:
+                    st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
+                elif rmse < 90:
+                    st.success('Performa: Baik', icon=":material/thumb_up:")
+                elif rmse < 130:
+                    st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
+                elif rmse < 170:
+                    st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
+                elif rmse < 210:
+                    st.error('Performa: Buruk', icon=":material/thumb_down:")
                 else:
-                    return
-                        
-                st.subheader("Insight Pasar")
-                market_trends = analyze_market_trends(data, forecast)
-                st.write(market_trends)
-                
-                st.subheader("Rekomendasi")
-                recommendation = generate_recommendation(percent_change, accuracy)
-                st.write(recommendation)
-                
-                st.warning('Catatan Penting', icon=":material/edit_note:")
-                st.write("- Prediksi ini didasarkan pada data historis dan model statistik.")
-                st.write("- Faktor eksternal seperti kondisi ekonomi, kebijakan perusahaan, dan peristiwa global dapat mempengaruhi harga saham secara signifikan.")
-                st.write("- Selalu lakukan analisis tambahan dan konsultasikan dengan penasihat keuangan sebelum membuat keputusan investasi.")
-            
+                    st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
+
+                # Fungsi tambahan untuk analisis dan rekomendasi
+                def analyze_market_trends(data, forecast):
+                    # Implementasi analisis tren pasar
+                    # Contoh sederhana:
+                    recent_trend = "bullish" if data['Close'].pct_change().mean().item() > 0 else "bearish"
+                    forecast_trend = "naik" if forecast[-1] > forecast[0] else "turun"
+                    return f"Tren pasar terkini cenderung {recent_trend}. Berdasarkan prediksi, harga saham diperkirakan akan {forecast_trend} dalam periode mendatang."
+
+                def generate_recommendation(percent_change, accuracy):
+                    if accuracy > 80:
+                        return "Prediksi menunjukkan penurunan yang signifikan dengan tingkat akurasi yang tinggi. Waspadai risiko dan pertimbangkan untuk mengurangi eksposur atau melakukan hedging."
+                    else:
+                        return "Prediksi menunjukkan pergerakan moderat. Pantau perkembangan pasar dan lakukan analisis lebih lanjut sebelum mengambil keputusan."
             else:
-                st.warning('Silahkan pilih epoch yang lebih besar atau menggunakan Jumlah Data Pelatihan yang lebih banyak, lalu lakukan kembali Pelatihan Model', icon=":material/exclamation:")
+                return
+                    
+            st.subheader("Insight Pasar")
+            market_trends = analyze_market_trends(data, forecast)
+            st.write(market_trends)
+            
+            st.subheader("Rekomendasi")
+            recommendation = generate_recommendation(percent_change, accuracy)
+            st.write(recommendation)
+            
+            st.warning('Catatan Penting', icon=":material/edit_note:")
+            st.write("- Prediksi ini didasarkan pada data historis dan model statistik.")
+            st.write("- Faktor eksternal seperti kondisi ekonomi, kebijakan perusahaan, dan peristiwa global dapat mempengaruhi harga saham secara signifikan.")
+            st.write("- Selalu lakukan analisis tambahan dan konsultasikan dengan penasihat keuangan sebelum membuat keputusan investasi.")
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
 
