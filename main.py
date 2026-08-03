@@ -83,6 +83,34 @@ def format_df_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: smart_format(x))
     return display_df
 
+@st.cache_data(ttl=3600)
+def get_market_cap(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        cap = info.get('marketCap', None)
+        if cap is None or cap == 0:
+            cap = info.get('regularMarketVolume', None)
+        return cap
+    except Exception:
+        return None
+
+def format_market_cap(cap, curr_prefix=""):
+    if cap is None or cap == 0 or pd.isna(cap):
+        return "-"
+    try:
+        fcap = float(cap)
+        if fcap >= 1e12:
+            return f"{curr_prefix}{fcap/1e12:,.2f} T"
+        elif fcap >= 1e9:
+            return f"{curr_prefix}{fcap/1e9:,.2f} B"
+        elif fcap >= 1e6:
+            return f"{curr_prefix}{fcap/1e6:,.2f} M"
+        else:
+            return smart_format(fcap, prefix=curr_prefix)
+    except Exception:
+        return "-"
+
 def main(stock):
     if 'current_stock' not in st.session_state:
         st.session_state.current_stock = ""
@@ -97,6 +125,40 @@ def main(stock):
         st.session_state.current_stock = stock
 
     st.header(f"Prediksi Harga Saham dengan kode {stock}")
+
+    # Ringkasan 3 kolom di bawah header
+    curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
+    try:
+        if crypto_yfinance and (stock.endswith('-USD') or stock.endswith('-IDR') or stock in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD']):
+            quick_df = cyf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
+        else:
+            quick_df = yf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
+        
+        if not quick_df.empty:
+            if 'Date' in quick_df.columns:
+                last_dt = pd.to_datetime(quick_df['Date'].iloc[-1]).strftime('%Y-%m-%d')
+            else:
+                last_dt = pd.to_datetime(quick_df.index[-1]).strftime('%Y-%m-%d')
+            last_pr = safe_float(quick_df['Close'].iloc[-1])
+            last_pr_str = smart_format(last_pr, prefix=curr_prefix)
+        else:
+            last_dt = "-"
+            last_pr_str = "-"
+    except Exception:
+        last_dt = "-"
+        last_pr_str = "-"
+
+    mcap_val = get_market_cap(stock)
+    mcap_str = format_market_cap(mcap_val, curr_prefix=curr_prefix)
+
+    col_sum1, col_sum2, col_sum3 = st.columns(3)
+    with col_sum1:
+        st.metric("Tanggal Terakhir", last_dt)
+    with col_sum2:
+        st.metric("Harga Terakhir", last_pr_str)
+    with col_sum3:
+        st.metric("Market Cap", mcap_str)
+    st.write("")
 
     with st.expander("1. Persiapan Lingkungan"):
         with st.spinner("Mengimpor library yang diperlukan..."):
@@ -555,9 +617,7 @@ def main(stock):
                     st.dataframe(comparison_df)
 
                 accuracy = 100 - mape * 100
-                if round(rmse, 3) == 0.0:
-                    st.warning('Terjadi kesalahan: Nilai RMSE bernilai 0.000 (Model tidak memprediksi variasi data dengan baik). Silahkan pilih epoch yang lebih besar atau menggunakan Jumlah Data Pelatihan yang lebih banyak, lalu lakukan kembali Pelatihan Model', icon=":material/exclamation:")
-                elif accuracy < 0:
+                if accuracy < 0:
                     if accuracy >= -50:
                         st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
                     elif accuracy >= -100:
@@ -805,8 +865,6 @@ def main(stock):
 
                 # Fungsi tambahan untuk analisis dan rekomendasi
                 def analyze_market_trends(data, forecast):
-                    # Implementasi analisis tren pasar
-                    # Contoh sederhana:
                     recent_trend = "bullish" if data['Close'].pct_change().mean().item() > 0 else "bearish"
                     forecast_trend = "naik" if forecast[-1] > forecast[0] else "turun"
                     return f"Tren pasar terkini cenderung {recent_trend}. Berdasarkan prediksi, harga saham diperkirakan akan {forecast_trend} dalam periode mendatang."
@@ -823,14 +881,17 @@ def main(stock):
             market_trends = analyze_market_trends(data, forecast)
             st.write(market_trends)
             
-            st.subheader("Rekomendasi")
-            recommendation = generate_recommendation(percent_change, accuracy)
-            st.write(recommendation)
-            
-            st.warning('Catatan Penting', icon=":material/edit_note:")
-            st.write("- Prediksi ini didasarkan pada data historis dan model statistik.")
-            st.write("- Faktor eksternal seperti kondisi ekonomi, kebijakan perusahaan, dan peristiwa global dapat mempengaruhi harga saham secara signifikan.")
-            st.write("- Selalu lakukan analisis tambahan dan konsultasikan dengan penasihat keuangan sebelum membuat keputusan investasi.")
+            with st.expander("💡 Rekomendasi & Catatan Penting", expanded=False):
+                st.markdown("**Rekomendasi:**")
+                recommendation = generate_recommendation(percent_change, accuracy)
+                st.write(recommendation)
+                
+                st.markdown("**Catatan Penting:**")
+                st.warning("""
+- Prediksi ini didasarkan pada data historis dan model statistik.
+- Faktor eksternal seperti kondisi ekonomi, kebijakan perusahaan, dan peristiwa global dapat mempengaruhi harga saham secara signifikan.
+- Selalu lakukan analisis tambahan dan konsultasikan dengan penasihat keuangan sebelum membuat keputusan investasi.
+                """, icon=":material/edit_note:")
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
 
