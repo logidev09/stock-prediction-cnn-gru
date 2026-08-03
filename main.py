@@ -43,48 +43,24 @@ def main(stock):
 
     with st.expander("1. Persiapan Lingkungan"):
         with st.spinner("Mengimpor library yang diperlukan..."):
-
-            code = '''import time
-import numpy as np
-import pandas as pd
-import yfinance as yf
-from PIL import Image
-import streamlit as st
-import tensorflow as tf
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import date, timedelta
-from tensorflow.keras.optimizers import Adam
-from streamlit_option_menu import option_menu
-from tensorflow.keras.models import Sequential
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.callbacks import LambdaCallback
-from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score'''
-
-            lines = code.split('\n')
-            placeholder = st.empty()
-
-            for i in range(len(lines) + 1):
-                placeholder.code('\n'.join(lines[:i]), language='python')
-                time.sleep(0.1)  # Adjust this value to control the speed of the animation
-
+            with st.popover("Detail Library yang Digunakan"):
+                st.info('Import Library Utama: `time`, `numpy`, `pandas`, `yfinance`, `PIL` untuk pengelolaan data dasar, manipulasi array, serta penampilan gambar.', icon=":material/code:")
+                st.warning('Import Framework ML & Visualisasi: `streamlit`, `tensorflow`, `matplotlib`, `sklearn`, `streamlit_option_menu` untuk pemodelan CNN-GRU dan antarmuka web interaktif.', icon=":material/extension:")
             
-                
-                # Workflow Diagram
-                st.subheader("Diagram Alur Kerja")
-                mermaid_code = """
-                graph TD
-                    A[Input Saham/Crypto] --> B[Pengumpulan Data]
-                    B --> C[Pra-pemrosesan Data]
-                    C --> D[Perancangan Model CNN-GRU]
-                    D --> E[Pelatihan Model]
-                    E --> F[Evaluasi Model]
-                    F --> G[Visualisasi Prediksi]
-                    G --> H[Interpretasi Hasil]
-                """
-                st.code(mermaid_code, language='mermaid')
-                st.success("Library berhasil diimpor")
+            # Workflow Diagram
+            st.subheader("Diagram Alur Kerja")
+            mermaid_code = """
+            graph TD
+                A[Input Saham/Crypto] --> B[Pengumpulan Data]
+                B --> C[Pra-pemrosesan Data]
+                C --> D[Perancangan Model CNN-GRU]
+                D --> E[Pelatihan Model]
+                E --> F[Evaluasi Model]
+                F --> G[Visualisasi Prediksi]
+                G --> H[Interpretasi Hasil]
+            """
+            st.code(mermaid_code, language='mermaid')
+            st.success("Library berhasil diimpor")
 
     with st.expander("2. Pengumpulan Data"):
 
@@ -153,6 +129,17 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         # Pilihan untuk input jumlah data pelatihan
         st.subheader("Pengaturan Data Pelatihan")
 
+        use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
+        if use_today_end:
+            end_date_obj = date.today()
+        else:
+            end_date_obj = st.date_input(
+                "Tanggal Selesai Pelatihan",
+                value=date.today(),
+                min_value=date(2000, 1, 1),
+                max_value=date.today()
+            )
+
         method_options = ["Rentang Tahun / Bulan / Hari", "Gunakan Jumlah Hari Terakhir", "Pilih Tanggal dengan Kalender"]
         selected_method = st.radio(
             "Pilihan Metode Memilih Data Pelatihan:",
@@ -160,16 +147,10 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
             index=0
         )
 
-        end_date_obj = date.today()
-
         if selected_method == "Rentang Tahun / Bulan / Hari":
-            col_y, col_m, col_d = st.columns(3)
-            with col_y:
-                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
-            with col_m:
-                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1)
-            with col_d:
-                days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 31, 0)
+            years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
+            months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1)
+            days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 31, 0)
             
             days = (years_ago * 365) + (months_ago * 30) + days_ago
             if days < 120:
@@ -182,34 +163,16 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
             start_date_obj = end_date_obj - timedelta(days=days)
 
         else: # "Pilih Tanggal dengan Kalender"
-            default_start = date.today() - timedelta(days=1470) # 1470 hari yang lalu (sekitar 4 tahun 1 bulan yang lalu)
+            default_start = end_date_obj - timedelta(days=1470) # 1470 hari yang lalu (~4 tahun 1 bulan yang lalu)
             
-            col_cal1, col_cal2 = st.columns(2)
-            with col_cal1:
-                start_date_selected = st.date_input(
-                    "Tanggal Mulai Pelatihan",
-                    value=default_start,
-                    min_value=date(2000, 1, 1),
-                    max_value=date.today()
-                )
-            with col_cal2:
-                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
-                if use_today_end:
-                    end_date_selected = date.today()
-                else:
-                    end_date_selected = st.date_input(
-                        "Tanggal Selesai Pelatihan",
-                        value=date.today(),
-                        min_value=start_date_selected,
-                        max_value=date.today()
-                    )
+            start_date_selected = st.date_input(
+                "Tanggal Mulai Pelatihan",
+                value=default_start,
+                min_value=date(2000, 1, 1),
+                max_value=end_date_obj
+            )
             
-            with st.expander("💡 Tips Memilih Tanggal dengan Kalender", expanded=False):
-                st.info("Secara default, tanggal mulai diset ke 1470 hari yang lalu (sekitar 4 Tahun 1 Bulan) dan tanggal selesai diset ke tanggal terbaru.")
-                st.warning("Pastikan rentang tanggal yang dipilih minimal 120 hari agar memenuhi syarat pelatihan model.")
-
             start_date_obj = start_date_selected
-            end_date_obj = end_date_selected
             days = (end_date_obj - start_date_obj).days
             if days < 120:
                 days = 120
@@ -217,6 +180,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
         with st.popover("Tips Memilih Data Pelatihan"):
             st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
             st.warning('Ket: Secara Default menggunakan 4 Tahun 1 Bulan atau 1470 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
+            st.warning('Ket: Jika menggunakan Kalender, secara default tanggal mulai diset ke 1470 hari yang lalu (sekitar 4 Tahun 1 Bulan) dan tanggal selesai diset ke tanggal terbaru.', icon=":material/calendar_month:")
             st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
 
         # Mengubah Format Tanggal data Pelatihan
@@ -308,9 +272,9 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
             train_percentage = (x_train.shape[0] / total_samples) * 100
             test_percentage = (x_test.shape[0] / total_samples) * 100
 
-            st.code('''seq_length = 60''')
-
-            st.code('''x_train, x_test, y_train, y_test, scaler = preprocess_data(data, seq_length)''')
+            with st.popover("Detail Pra-pemrosesan Data"):
+                st.info('Ukuran Panjang Sekuens (`seq_length`): Menggunakan 60 hari historis untuk memprediksi harga saham pada hari berikutnya.', icon=":material/timeline:")
+                st.warning('Pembagian Data: Data di-scaling dengan `MinMaxScaler` (0-1) lalu dibagi menjadi 80% data pelatihan dan 20% data pengujian.', icon=":material/pie_chart:")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -348,29 +312,10 @@ from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, 
             def get_model(seq_length):
                 return create_model(seq_length)
 
-            code = '''def create_model(seq_length):
-    model = Sequential([
-        Conv1D(filters=64,
-            kernel_size=3,
-            activation='relu',
-            input_shape=(seq_length, 1)),
-        GRU(50, return_sequences=True),
-        Dropout(0.2),
-        GRU(50),
-        Dense(1)
-    ])'''
-            lines = code.split('\n')
-            placeholder = st.empty()
-
-            for i in range(len(lines) + 1):
-                placeholder.code('\n'.join(lines[:i]), language='python')
-                time.sleep(0.1)  # Adjust this value to control the speed of the animation
-
-            st.code('''  model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-    return model''')
-
-            st.code('''def get_model(seq_length):
-    return create_model(seq_length)''')
+            with st.popover("Detail Arsitektur Model CNN-GRU"):
+                st.info('Lapisan Ekstraksi Fitur: `Conv1D` (64 filter, kernel size 3, aktivasi ReLU) untuk mengekstrak pola fitur spasial dari sekuens data.', icon=":material/layers:")
+                st.warning('Lapisan Memori & Regulasi: Lapisan `GRU` (50 unit) berurutan dengan `Dropout` (0.2) untuk menangkap pola temporal sekuensial tanpa overfitting.', icon=":material/memory:")
+                st.warning('Lapisan Output & Kompilasi: Lapisan `Dense` (1 unit output) dikompilasi dengan optimizer `Adam(learning_rate=0.001)` dan loss function `MSE`.', icon=":material/check_circle:")
 
             st.success("Perancangan Model CNN-GRU selesai!")
 
