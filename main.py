@@ -26,6 +26,63 @@ def safe_float(value):
         return float(value.item())
     return float(value)
 
+def smart_format(val, default_decimals=2, prefix=""):
+    """
+    Format angka secara cerdas dengan dukungan sub-angka (subscript) untuk 0.000...
+    - Jika val adalah None / NaN: kembalikan "-"
+    - Jika val == 0: kembalikan prefix + "0.00"
+    - Jika abs(val) >= 0.01: format standar (misal 1,234.56 atau 0.05)
+    - Jika 0 < abs(val) < 0.01: format 0.0_{subscript}N... (misal 0.0₄1234 untuk 0.00001234)
+    """
+    if val is None or (isinstance(val, (float, np.floating, int, np.integer)) and pd.isna(val)):
+        return "-"
+    try:
+        fval = float(val)
+    except (ValueError, TypeError):
+        return str(val)
+
+    if fval == 0:
+        return f"{prefix}0.00"
+
+    sign = "-" if fval < 0 else ""
+    abs_val = abs(fval)
+
+    if abs_val >= 0.01:
+        if abs_val >= 1000:
+            return f"{prefix}{sign}{abs_val:,.2f}"
+        elif default_decimals == 3:
+            return f"{prefix}{sign}{abs_val:.3f}"
+        elif default_decimals == 4:
+            return f"{prefix}{sign}{abs_val:.4f}"
+        else:
+            return f"{prefix}{sign}{abs_val:.2f}"
+
+    # Untuk nilai sangat kecil: 0 < abs_val < 0.01
+    exp_str = f"{abs_val:.10e}"
+    parts = exp_str.split('e')
+    mantissa = float(parts[0])
+    exponent = int(parts[1])
+
+    zero_count = abs(exponent) - 1
+
+    subscript_digits = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
+    sub_str = ''.join(subscript_digits[d] for d in str(zero_count))
+
+    sig_digits = f"{mantissa:.4f}".replace('.', '').rstrip('0')
+    if not sig_digits:
+        sig_digits = f"{mantissa:.2f}".replace('.', '')
+
+    return f"{prefix}{sign}0.0{sub_str}{sig_digits}"
+
+def format_df_for_display(df):
+    if df is None or df.empty:
+        return df
+    display_df = df.copy()
+    for col in display_df.columns:
+        if pd.api.types.is_numeric_dtype(display_df[col]):
+            display_df[col] = display_df[col].apply(lambda x: smart_format(x))
+    return display_df
+
 def main(stock):
     if 'current_stock' not in st.session_state:
         st.session_state.current_stock = ""
@@ -99,9 +156,9 @@ def main(stock):
 
         st.subheader("Data keseluruhan")
         st.write("Mulai")
-        st.write(full_data.head(1))
+        st.write(format_df_for_display(full_data.head(1)))
         st.write("Hingga")
-        st.write(full_data.tail(1))
+        st.write(format_df_for_display(full_data.tail(1)))
 
         # Mengubah index menjadi datetime untuk memudahkan plotting
         full_data['Date'] = pd.to_datetime(full_data['Date'])
@@ -123,7 +180,7 @@ def main(stock):
         st.pyplot(fig1)
 
         with st.popover("Tampilkan Semua Data"):
-            st.write(full_data)
+            st.write(format_df_for_display(full_data))
 
         # DATA PELATIHAN
         # Pilihan untuk input jumlah data pelatihan
@@ -218,9 +275,9 @@ def main(stock):
         st.subheader("Data Pelatihan yang telah dipilih")
         st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
         st.write("Mulai")
-        st.write(data.head(1))
+        st.write(format_df_for_display(data.head(1)))
         st.write("Hingga")
-        st.write(data.tail(1))
+        st.write(format_df_for_display(data.tail(1)))
 
         # Membuat chart dengan matplotlib untuk data pelatihan
         fig2, ax2 = plt.subplots(figsize=(14, 7))
@@ -238,7 +295,7 @@ def main(stock):
         st.pyplot(fig2)
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
-            st.write(data)
+            st.write(format_df_for_display(data))
 
     with st.expander("3. Pra-pemrosesan Data"):
 
@@ -482,18 +539,18 @@ def main(stock):
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("MSE", f"{mse:.3f}")
-                    st.metric("RMSE", f"{rmse:.3f}")
-                    st.metric("R2 Score", f"{r2:.3f}")
-                    st.metric("MAPE", f"{mape:.3f}")
-                    st.metric("Akurasi", f"{100 - mape*100:.3f}%")
+                    st.metric("MSE", smart_format(mse, default_decimals=3))
+                    st.metric("RMSE", smart_format(rmse, default_decimals=3))
+                    st.metric("R2 Score", smart_format(r2, default_decimals=3))
+                    st.metric("MAPE", smart_format(mape, default_decimals=3))
+                    st.metric("Akurasi", f"{smart_format(100 - mape*100, default_decimals=3)}%")
 
                 with col2:
                     # Menampilkan tabel perbandingan
                     comparison_df = pd.DataFrame({
                         'Tanggal': actual_dates.strftime('%Y-%m-%d'),
-                        'Harga Aktual': y_test.round(2),
-                        'Harga Prediksi': y_pred.round(2)
+                        'Harga Aktual': [smart_format(v) for v in y_test],
+                        'Harga Prediksi': [smart_format(v) for v in y_pred]
                     })
                     st.dataframe(comparison_df)
 
@@ -545,8 +602,8 @@ def main(stock):
                         # Display final metrics
                         final_loss = history.history['loss'][-1]
                         final_val_loss = history.history['val_loss'][-1]
-                        st.metric("Loss akhir", f"{final_loss:.4f}")
-                        st.metric("Validation Loss akhir", f"{final_val_loss:.4f}")
+                        st.metric("Loss akhir", smart_format(final_loss, default_decimals=4))
+                        st.metric("Validation Loss akhir", smart_format(final_val_loss, default_decimals=4))
 
                         # Display full training history
                         st.subheader("Riwayat Pelatihan")
@@ -631,7 +688,7 @@ def main(stock):
 
                         table_df = pd.DataFrame({
                                     'Tanggal': date_range.strftime('%Y-%b-%d'),
-                                    'Harga Prediksi': forecast.flatten().round(2)
+                                    'Harga Prediksi': [smart_format(v) for v in forecast.flatten()]
                                 })
 
                         # Calculate metrics
@@ -643,24 +700,24 @@ def main(stock):
 
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric("MSE", f"{mse:.3f}")
-                            st.metric("MAPE", f"{mape:.3f}")
+                            st.metric("MSE", smart_format(mse, default_decimals=3))
+                            st.metric("MAPE", smart_format(mape, default_decimals=3))
                             # Menampilkan tabel perbandingan
                             with st.popover("Tampilkan Tabel"):
                                 st.dataframe(table_df)
                         with col2:
-                            st.metric("RMSE", f"{rmse:.3f}")
-                            st.metric("R2 Score", f"{r2:.3f}")
-
-                            st.metric("Akurasi", f"{accuracy:.3f}%")
+                            st.metric("RMSE", smart_format(rmse, default_decimals=3))
+                            st.metric("R2 Score", smart_format(r2, default_decimals=3))
+                            st.metric("Akurasi", f"{smart_format(accuracy, default_decimals=3)}%")
 
                         st.subheader("Ringkasan Prediksi")
 
+                        curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
+                            st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
                         with col2:
-                            st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
+                            st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
 
                         if accuracy < 0:
                             if accuracy >= -50:
@@ -702,11 +759,12 @@ def main(stock):
             if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
                 st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
+                curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("Harga Terakhir", f"Rp {last_actual_price:.2f}")
+                    st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
                 with col2:
-                    st.metric("Prediksi Harga", f"Rp {last_forecast_price:.2f}", f"{percent_change:.2f}%")
+                    st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
 
                 def interpret_forecast(percent_change):
                     if percent_change < -20:
