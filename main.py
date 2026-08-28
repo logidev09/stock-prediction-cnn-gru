@@ -576,7 +576,7 @@ def main(stock):
                     st.caption(f"VWAP {label}")
                     if not s_df.empty:
                         vwap_s = calculate_vwap_series(s_df)
-                        is_pos = (vwap_s.iloc[-1] >= vwap_s.iloc[0]) if len(vwap_s) >= 2 else (chg >= 0 if chg is not None else True)
+                        is_pos = (vwap_s[-1] >= vwap_s[0]) if len(vwap_s) >= 2 else (chg >= 0 if chg is not None else True)
                         fig = render_sparkline_chart(vwap_s, is_positive=is_pos, chart_type='line')
                         st.pyplot(fig)
                         plt.close(fig)
