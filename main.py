@@ -449,15 +449,18 @@ def main(stock):
         if days >= 120:
 
             with st.popover("Mengubah Jumlah Epoch"):
-                epochs = st.select_slider("Jumlah Epoch", options=[1] + list(range(10, 101, 10)), value=40)
-                st.info('Ket: Semakin banyak Jumlahnya, maka semakin lambat waktu untuk komputasinya.', icon=":material/thumb_down:")
-                st.warning('Ket: Semakin sedikit Jumlahnya, maka semakin cepat waktu untuk komputasinya, Namun mengurangi Performa Akurasi.', icon=":material/timer_3_alt_1:")
+                epoch_options = [1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 120, 150, 200, 300, 500]
+                epochs = st.select_slider("Jumlah Epoch", options=epoch_options, value=50)
+                st.info('Rekomendasi Default: **50 Epoch** (Rentang Paling Akurat: **40–100 Epoch**).', icon=":material/recommend:")
+                st.warning('Ket: Semakin banyak Jumlahnya (>150), maka waktu komputasi semakin lambat dan berisiko overfitting pada noise pasar.', icon=":material/timer_3_alt_1:")
+                st.info('Ket: Semakin sedikit Jumlahnya (<20), maka komputasi sangat cepat namun berisiko underfitting (bobot GRU belum konvergen).', icon=":material/speed:")
 
             with st.popover("Mengubah Ukuran Batch"):
-                batch_size_options = [4, 8, 16, 32, 64, 128, 256]
-                batch_size = st.select_slider("Ukuran Batch", options=batch_size_options, value=16)
-                st.info('Ket: Semakin besar ukurannya, maka semakin cepat waktu untuk komputasinya.', icon=":material/thumb_up:")
-                st.warning('Ket: Semakin kecil ukurannya, maka semakin lambat waktu untuk komputasinya, Namun meningkatkan Performa Akurasi.', icon=":material/timer_10_alt_1:")
+                batch_size_options = [2, 4, 8, 16, 32, 64, 128, 256, 512]
+                batch_size = st.select_slider("Ukuran Batch", options=batch_size_options, value=32)
+                st.info('Rekomendasi Default: **32** (Rentang Paling Akurat: **16–32** untuk Time Series CNN-GRU).', icon=":material/recommend:")
+                st.warning('Ket: Ukuran kecil (4–16) memberikan regularisasi stokastik lebih baik namun komputasi relatif lebih lambat.', icon=":material/tune:")
+                st.info('Ket: Ukuran besar (128–512) mempercepat komputasi GPU/CPU namun rentan mengalami generalization gap pada data deret waktu.', icon=":material/bolt:")
 
             # Define the time periods and their corresponding days
             def get_forecast_options(stock):
