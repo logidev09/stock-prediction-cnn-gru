@@ -83,16 +83,35 @@ def format_df_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: smart_format(x))
     return display_df
 
+def is_crypto_ticker(ticker):
+    if not ticker:
+        return False
+    t_upper = ticker.upper()
+    return (
+        t_upper.endswith('-USD') or
+        t_upper.endswith('-IDR') or
+        'USD' in t_upper or
+        t_upper in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD', 'BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'ADA', 'BNB']
+    )
+
 @st.cache_data(ttl=3600)
-def get_market_cap(ticker):
+def get_market_cap(ticker, last_close=0.0, last_volume=0.0):
     try:
         t = yf.Ticker(ticker)
-        info = t.info
-        cap = info.get('marketCap', None)
+        info = t.info or {}
+        cap = info.get('marketCap')
         if cap is None or cap == 0:
-            cap = info.get('regularMarketVolume', None)
+            cap = info.get('regularMarketVolume')
+        if cap is None or cap == 0:
+            circ_supply = info.get('circulatingSupply')
+            if circ_supply and last_close and last_close > 0:
+                cap = float(circ_supply) * float(last_close)
+        if (cap is None or cap == 0) and last_volume and last_close and last_volume > 0 and last_close > 0:
+            cap = float(last_volume) * float(last_close)
         return cap
     except Exception:
+        if last_volume and last_close and last_volume > 0 and last_close > 0:
+            return float(last_volume) * float(last_close)
         return None
 
 def format_market_cap(cap, curr_prefix=""):
@@ -111,6 +130,118 @@ def format_market_cap(cap, curr_prefix=""):
     except Exception:
         return "-"
 
+def get_change_pct(df, days_lookback):
+    if df is None or len(df) < 2:
+        return None
+    try:
+        curr_price = safe_float(df['Close'].iloc[-1])
+        last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        target_dt = last_dt - pd.Timedelta(days=days_lookback)
+        
+        dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+        sub_df = df[dates <= target_dt]
+        if not sub_df.empty:
+            past_price = safe_float(sub_df['Close'].iloc[-1])
+        else:
+            past_price = safe_float(df['Close'].iloc[0])
+        
+        if past_price > 0:
+            return ((curr_price - past_price) / past_price) * 100
+        return None
+    except Exception:
+        return None
+
+def evaluate_model_performance(y_test, y_pred):
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, y_pred)
+    mape = mean_absolute_percentage_error(y_test, y_pred)
+    accuracy = 100 - mape * 100
+    
+    mean_actual = np.mean(y_test)
+    nrmse = (rmse / mean_actual) if mean_actual > 0 else 1.0
+
+    # 1. Skor Akurasi (0-100)
+    if accuracy >= 95:
+        score_acc = 100
+    elif accuracy >= 85:
+        score_acc = 80 + (accuracy - 85) * 2
+    elif accuracy >= 70:
+        score_acc = 60 + (accuracy - 70) * (20 / 15)
+    elif accuracy >= 50:
+        score_acc = 40 + (accuracy - 50) * (20 / 20)
+    elif accuracy > 0:
+        score_acc = (accuracy / 50) * 40
+    else:
+        score_acc = 0
+
+    # 2. Skor R2 (0-100)
+    if r2 >= 0.95:
+        score_r2 = 100
+    elif r2 >= 0.85:
+        score_r2 = 80 + (r2 - 0.85) * 200
+    elif r2 >= 0.70:
+        score_r2 = 60 + (r2 - 0.70) * (20 / 0.15)
+    elif r2 >= 0.50:
+        score_r2 = 40 + (r2 - 0.50) * (20 / 0.20)
+    elif r2 > 0:
+        score_r2 = (r2 / 0.50) * 40
+    else:
+        score_r2 = 0
+
+    # 3. Skor NRMSE (0-100)
+    if nrmse <= 0.05:
+        score_nrmse = 100
+    elif nrmse <= 0.10:
+        score_nrmse = 80 + (0.10 - nrmse) * (20 / 0.05)
+    elif nrmse <= 0.20:
+        score_nrmse = 60 + (0.20 - nrmse) * (20 / 0.10)
+    elif nrmse <= 0.35:
+        score_nrmse = 40 + (0.35 - nrmse) * (20 / 0.15)
+    else:
+        score_nrmse = max(0, 40 - (nrmse - 0.35) * 40)
+
+    # Akumulasi Skor Gabungan: 45% Akurasi (MAPE), 35% R2, 20% NRMSE
+    composite_score = 0.45 * score_acc + 0.35 * score_r2 + 0.20 * score_nrmse
+
+    if accuracy < 0 or r2 < -0.5:
+        label = "Performa: Sangat Buruk (Akurasi Negatif)"
+        status = "error" # Merah
+        badge = "🔴"
+    elif composite_score >= 88:
+        label = "Performa: Sangat Baik"
+        status = "success" # Hijau
+        badge = "🟢"
+    elif composite_score >= 75:
+        label = "Performa: Baik"
+        status = "success" # Hijau/Kuning
+        badge = "🟡"
+    elif composite_score >= 60:
+        label = "Performa: Cukup Baik"
+        status = "info" # Biru
+        badge = "🔵"
+    elif composite_score >= 40:
+        label = "Performa: Kurang Baik"
+        status = "warning" # Oranye
+        badge = "🟠"
+    else:
+        label = "Performa: Sangat Buruk"
+        status = "error" # Merah
+        badge = "🔴"
+
+    return {
+        "mse": mse,
+        "rmse": rmse,
+        "r2": r2,
+        "mape": mape,
+        "accuracy": accuracy,
+        "nrmse": nrmse,
+        "composite_score": composite_score,
+        "label": label,
+        "status": status,
+        "badge": badge
+    }
+
 def main(stock):
     if 'current_stock' not in st.session_state:
         st.session_state.current_stock = ""
@@ -124,12 +255,16 @@ def main(stock):
             st.session_state.training_completed = False
         st.session_state.current_stock = stock
 
-    st.header(f"Prediksi Harga Saham dengan kode {stock}")
+    asset_type = "Crypto" if is_crypto_ticker(stock) else "Saham"
+
+    st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
 
     # Ringkasan 3 kolom di bawah header
     curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
+    last_vol = 0.0
+    last_pr = 0.0
     try:
-        if crypto_yfinance and (stock.endswith('-USD') or stock.endswith('-IDR') or stock in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD']):
+        if crypto_yfinance and is_crypto_ticker(stock):
             quick_df = cyf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
         else:
             quick_df = yf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
@@ -141,6 +276,8 @@ def main(stock):
                 last_dt = pd.to_datetime(quick_df.index[-1]).strftime('%Y-%m-%d')
             last_pr = safe_float(quick_df['Close'].iloc[-1])
             last_pr_str = smart_format(last_pr, prefix=curr_prefix)
+            if 'Volume' in quick_df.columns:
+                last_vol = safe_float(quick_df['Volume'].iloc[-1])
         else:
             last_dt = "-"
             last_pr_str = "-"
@@ -148,7 +285,7 @@ def main(stock):
         last_dt = "-"
         last_pr_str = "-"
 
-    mcap_val = get_market_cap(stock)
+    mcap_val = get_market_cap(stock, last_close=last_pr, last_volume=last_vol)
     mcap_str = format_market_cap(mcap_val, curr_prefix=curr_prefix)
 
     col_sum1, col_sum2, col_sum3 = st.columns(3)
@@ -158,6 +295,46 @@ def main(stock):
         st.metric("Harga Terakhir", last_pr_str)
     with col_sum3:
         st.metric("Market Cap", mcap_str)
+
+    # Kolom Perubahan Harga 1D, 1W, 1M, 90D, YTD
+    if not quick_df.empty and len(quick_df) >= 2:
+        c_now = safe_float(quick_df['Close'].iloc[-1])
+        c_prev = safe_float(quick_df['Close'].iloc[-2])
+        chg_1d = ((c_now - c_prev) / c_prev) * 100 if c_prev > 0 else 0.0
+        chg_1w = get_change_pct(quick_df, 7)
+        chg_1m = get_change_pct(quick_df, 30)
+        chg_90d = get_change_pct(quick_df, 90)
+        chg_ytd = get_change_pct(quick_df, 365)
+
+        st.markdown(f"**Performa Perubahan Harga {stock}:**")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        metrics_list = [
+            (c1, "1 Hari (1D)", chg_1d),
+            (c2, "1 Minggu (1W)", chg_1w),
+            (c3, "1 Bulan (1M)", chg_1m),
+            (c4, "90 Hari (90D)", chg_90d),
+            (c5, "1 Tahun (YTD)", chg_ytd)
+        ]
+        for col, label, val in metrics_list:
+            with col:
+                if val is not None and not pd.isna(val):
+                    color = "#00C853" if val >= 0 else "#D50000"
+                    symbol = "▲" if val >= 0 else "▼"
+                    sign = "+" if val > 0 else ""
+                    bg_color = "rgba(0, 200, 83, 0.08)" if val >= 0 else "rgba(213, 0, 0, 0.08)"
+                    st.markdown(f"""
+                    <div style="background-color: {bg_color}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {color}; text-align: center;">
+                        <div style="font-size: 11px; color: #555; font-weight: 600;">{label}</div>
+                        <div style="font-size: 15px; font-weight: bold; color: {color}; margin-top: 2px;">{symbol} {sign}{val:.2f}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div style="background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 11px; color: #777; font-weight: 600;">{label}</div>
+                        <div style="font-size: 15px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
+                    </div>
+                    """, unsafe_allow_html=True)
     st.write("")
 
     with st.expander("1. Persiapan Lingkungan"):
@@ -187,7 +364,7 @@ def main(stock):
         @st.cache_data
         def load_data(ticker, start_date, end_date):
             try:
-                if crypto_yfinance and (ticker.endswith('-USD') or ticker.endswith('-IDR') or ticker in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD']):
+                if crypto_yfinance and is_crypto_ticker(ticker):
                     data = cyf.download(ticker, start=start_date, end=end_date)
                 else:
                     data = yf.download(ticker, start=start_date, end=end_date)
@@ -228,10 +405,10 @@ def main(stock):
 
         # Membuat chart dengan matplotlib untuk data keseluruhan
         fig1, ax1 = plt.subplots(figsize=(14, 7))
-        ax1.plot(full_data.index, full_data['Close'], label='Harga Saham', color='#31333F')
-        ax1.set_title('Data Keseluruhan Harga Saham')
+        ax1.plot(full_data.index, full_data['Close'], label=f'Harga {asset_type}', color='#31333F')
+        ax1.set_title(f'Data Keseluruhan Harga {asset_type}')
         ax1.set_xlabel('Tanggal')
-        ax1.set_ylabel('Harga Saham')
+        ax1.set_ylabel(f'Harga {asset_type}')
         ax1.legend()
         
         # Format x-axis
@@ -343,10 +520,10 @@ def main(stock):
 
         # Membuat chart dengan matplotlib untuk data pelatihan
         fig2, ax2 = plt.subplots(figsize=(14, 7))
-        ax2.plot(data.index, data['Close'], label='Harga Saham', color='#d6c36b')
-        ax2.set_title('Data Pelatihan Harga Saham')
+        ax2.plot(data.index, data['Close'], label=f'Harga {asset_type}', color='#d6c36b')
+        ax2.set_title(f'Data Pelatihan Harga {asset_type}')
         ax2.set_xlabel('Tanggal')
-        ax2.set_ylabel('Harga Saham')
+        ax2.set_ylabel(f'Harga {asset_type}')
         ax2.legend()
         
         # Format x-axis
@@ -677,20 +854,17 @@ def main(stock):
                 y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
                 actual_dates = data.index[-len(y_test):]
 
-                mse = mean_squared_error(y_test, y_pred)
-                rmse = np.sqrt(mse)
-                r2 = r2_score(y_test, y_pred)
-                mape = mean_absolute_percentage_error(y_test, y_pred)
+                perf_eval = evaluate_model_performance(y_test, y_pred)
 
                 st.subheader("Metrik Evaluasi:")
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("MSE", smart_format(mse, default_decimals=3))
-                    st.metric("RMSE", smart_format(rmse, default_decimals=3))
-                    st.metric("R2 Score", smart_format(r2, default_decimals=3))
-                    st.metric("MAPE", smart_format(mape, default_decimals=3))
-                    st.metric("Akurasi", f"{smart_format(100 - mape*100, default_decimals=3)}%")
+                    st.metric("MSE", smart_format(perf_eval['mse'], default_decimals=3))
+                    st.metric("RMSE", smart_format(perf_eval['rmse'], default_decimals=3))
+                    st.metric("R2 Score", smart_format(perf_eval['r2'], default_decimals=3))
+                    st.metric("MAPE", smart_format(perf_eval['mape'], default_decimals=3))
+                    st.metric("Akurasi", f"{smart_format(perf_eval['accuracy'], default_decimals=3)}%")
 
                 with col2:
                     # Menampilkan tabel perbandingan
@@ -701,29 +875,14 @@ def main(stock):
                     })
                     st.dataframe(comparison_df)
 
-                accuracy = 100 - mape * 100
-                if accuracy < 0:
-                    if accuracy >= -50:
-                        st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
-                    elif accuracy >= -100:
-                        st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                    else:
-                        st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                elif isinstance(rmse, (int, float)):
-                    if rmse < 50:
-                        st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
-                    elif rmse < 90:
-                        st.success('Performa: Baik', icon=":material/thumb_up:")
-                    elif rmse < 130:
-                        st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
-                    elif rmse < 170:
-                        st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
-                    elif rmse < 210:
-                        st.error('Performa: Buruk', icon=":material/thumb_down:")
-                    else:
-                        st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
+                if perf_eval['status'] == 'success':
+                    st.success(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'info':
+                    st.info(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'warning':
+                    st.warning(f"{perf_eval['label']}", icon=":material/thumb_down:")
                 else:
-                    st.error(f"Unexpected type for rmse: {type(rmse)}")
+                    st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
 
                 # Menampilkan Plot
                 fig, ax = plt.subplots(figsize=(14, 7))
@@ -733,7 +892,7 @@ def main(stock):
                 st.subheader("Visualisasi Hasil")
                 ax.set_title('Perbandingan Harga Aktual dan Prediksi')
                 ax.set_xlabel('Tanggal')
-                ax.set_ylabel('Harga Saham')
+                ax.set_ylabel(f'Harga {asset_type}')
                 ax.legend()
 
                 # Format x-axis
@@ -813,7 +972,7 @@ def main(stock):
                     ax.plot(actual_dates[start_idx:], y_pred[start_idx:], label='Harga Pengujian', color='#B16ED0')
                     ax.plot(date_range, forecast, label='Harga Prediksi', color='#107EDE')
                     ax.set_xlabel('Tanggal')
-                    ax.set_ylabel('Harga Saham')
+                    ax.set_ylabel(f'Harga {asset_type}')
                     ax.legend()
 
                     # Format x-axis
@@ -836,53 +995,36 @@ def main(stock):
                                     'Harga Prediksi': [smart_format(v) for v in forecast.flatten()]
                                 })
 
-                        # Calculate metrics
-                        mse = mean_squared_error(y_test[:forecast_days], y_pred[:forecast_days])
-                        rmse = np.sqrt(mse)
-                        r2 = r2_score(y_test[:forecast_days], y_pred[:forecast_days])
-                        mape = mean_absolute_percentage_error(y_test[:forecast_days], y_pred[:forecast_days])
-                        accuracy = 100 - mape * 100
+                        perf_eval_sub = evaluate_model_performance(y_test[:forecast_days], y_pred[:forecast_days])
 
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric("MSE", smart_format(mse, default_decimals=3))
-                            st.metric("MAPE", smart_format(mape, default_decimals=3))
+                            st.metric("MSE", smart_format(perf_eval_sub['mse'], default_decimals=3))
+                            st.metric("MAPE", smart_format(perf_eval_sub['mape'], default_decimals=3))
                             # Menampilkan tabel perbandingan
                             with st.popover("Tampilkan Tabel"):
                                 st.dataframe(table_df)
                         with col2:
-                            st.metric("RMSE", smart_format(rmse, default_decimals=3))
-                            st.metric("R2 Score", smart_format(r2, default_decimals=3))
-                            st.metric("Akurasi", f"{smart_format(accuracy, default_decimals=3)}%")
+                            st.metric("RMSE", smart_format(perf_eval_sub['rmse'], default_decimals=3))
+                            st.metric("R2 Score", smart_format(perf_eval_sub['r2'], default_decimals=3))
+                            st.metric("Akurasi", f"{smart_format(perf_eval_sub['accuracy'], default_decimals=3)}%")
 
                         st.subheader("Ringkasan Prediksi")
 
-                        curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
                         with col2:
                             st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
 
-                        if accuracy < 0:
-                            if accuracy >= -50:
-                                st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
-                            elif accuracy >= -100:
-                                st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                            else:
-                                st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                        elif rmse < 50:
-                            st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
-                        elif rmse < 90:
-                            st.success('Performa: Baik', icon=":material/thumb_up:")
-                        elif rmse < 130:
-                            st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
-                        elif rmse < 170:
-                            st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
-                        elif rmse < 210:
-                            st.error('Performa: Buruk', icon=":material/thumb_down:")
+                        if perf_eval_sub['status'] == 'success':
+                            st.success(f"{perf_eval_sub['label']}", icon=":material/thumb_up:")
+                        elif perf_eval_sub['status'] == 'info':
+                            st.info(f"{perf_eval_sub['label']}", icon=":material/thumb_up:")
+                        elif perf_eval_sub['status'] == 'warning':
+                            st.warning(f"{perf_eval_sub['label']}", icon=":material/thumb_down:")
                         else:
-                            st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
+                            st.error(f"{perf_eval_sub['label']}", icon=":material/thumb_down:")
 
                     else:
                         st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali jumlah hari pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
@@ -904,7 +1046,6 @@ def main(stock):
             if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
                 st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
-                curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
                 col1, col2 = st.columns(2)
                 with col1:
                     st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
@@ -913,52 +1054,49 @@ def main(stock):
 
                 def interpret_forecast(percent_change):
                     if percent_change < -20:
-                        return "Tren harga saham diprediksi akan sangat turun 🔴."
+                        return f"Tren harga {asset_type.lower()} diprediksi akan sangat turun 🔴."
                     elif percent_change < -5:
-                        return "Tren harga saham diprediksi akan turun 🟠."
+                        return f"Tren harga {asset_type.lower()} diprediksi akan turun 🟠."
                     elif percent_change < 5:
-                        return "Harga saham diprediksi akan stabil ⚫."
+                        return f"Harga {asset_type.lower()} diprediksi akan stabil ⚫."
                     elif percent_change < 20:
-                        return "Tren harga saham diprediksi akan naik 🟡."
+                        return f"Tren harga {asset_type.lower()} diprediksi akan naik 🟡."
                     else:
-                        return "Tren harga saham diprediksi akan sangat naik 🟢."
+                        return f"Tren harga {asset_type.lower()} diprediksi akan sangat naik 🟢."
 
                 interpretation = interpret_forecast(percent_change)
 
                 st.write(interpretation)
 
-                accuracy = 100 - mape * 100
-                if accuracy < 0:
-                    if accuracy >= -50:
-                        st.info('Performa: Kurang Baik (Akurasi Negatif)', icon=":material/thumb_down:")
-                    elif accuracy >= -100:
-                        st.error('Performa: Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                    else:
-                        st.error('Performa: Sangat Buruk (Akurasi Negatif)', icon=":material/thumb_down:")
-                elif rmse < 50:
-                    st.success('Performa: Sangat Baik', icon=":material/thumb_up:")
-                elif rmse < 90:
-                    st.success('Performa: Baik', icon=":material/thumb_up:")
-                elif rmse < 130:
-                    st.info('Performa: Cukup Baik', icon=":material/thumb_up:")
-                elif rmse < 170:
-                    st.info('Performa: Kurang Baik', icon=":material/thumb_down:")
-                elif rmse < 210:
-                    st.error('Performa: Buruk', icon=":material/thumb_down:")
+                if perf_eval['status'] == 'success':
+                    st.success(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'info':
+                    st.info(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'warning':
+                    st.warning(f"{perf_eval['label']}", icon=":material/thumb_down:")
                 else:
-                    st.error('Performa: Sangat Buruk', icon=":material/thumb_down:")
+                    st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
 
                 # Fungsi tambahan untuk analisis dan rekomendasi
                 def analyze_market_trends(data, forecast):
                     recent_trend = "bullish" if data['Close'].pct_change().mean().item() > 0 else "bearish"
                     forecast_trend = "naik" if forecast[-1] > forecast[0] else "turun"
-                    return f"Tren pasar terkini cenderung {recent_trend}. Berdasarkan prediksi, harga saham diperkirakan akan {forecast_trend} dalam periode mendatang."
+                    return f"Tren pasar terkini cenderung {recent_trend}. Berdasarkan prediksi, harga {asset_type.lower()} diperkirakan akan {forecast_trend} dalam periode mendatang."
 
-                def generate_recommendation(percent_change, accuracy):
-                    if accuracy > 80:
-                        return "Prediksi menunjukkan penurunan yang signifikan dengan tingkat akurasi yang tinggi. Waspadai risiko dan pertimbangkan untuk mengurangi eksposur atau melakukan hedging."
+                def generate_recommendation(percent_change, perf_res):
+                    acc = perf_res['accuracy']
+                    stat = perf_res['status']
+                    if stat == 'success' and acc >= 85:
+                        if percent_change < -5:
+                            return f"Prediksi menunjukkan tren penurunan pada {asset_type.lower()} dengan tingkat akurasi model yang tinggi. Waspadai risiko penurunan harga dan pertimbangkan strategi manajemen risiko."
+                        elif percent_change > 5:
+                            return f"Prediksi menunjukkan tren kenaikan pada {asset_type.lower()} dengan tingkat akurasi model yang tinggi. Peluang momentum positif terlihat baik."
+                        else:
+                            return f"Prediksi menunjukkan harga {asset_type.lower()} relatif stabil dengan akurasi model yang tinggi."
+                    elif stat in ['info', 'warning']:
+                        return f"Model menunjukkan akurasi moderat ({acc:.1f}%). Gunakan hasil prediksi sebagai indikator pelengkap bersama analisis teknikal lainnya."
                     else:
-                        return "Prediksi menunjukkan pergerakan moderat. Pantau perkembangan pasar dan lakukan analisis lebih lanjut sebelum mengambil keputusan."
+                        return f"Tingkat akurasi model saat ini rendah ({acc:.1f}%). Disarankan menambah jumlah data pelatihan atau menyesuaikan hyperparameter (epoch/batch) sebelum mengambil keputusan investasi."
             else:
                 return
                     
@@ -968,14 +1106,14 @@ def main(stock):
             
             with st.expander("💡 Rekomendasi & Catatan Penting", expanded=False):
                 st.markdown("**Rekomendasi:**")
-                recommendation = generate_recommendation(percent_change, accuracy)
+                recommendation = generate_recommendation(percent_change, perf_eval)
                 st.write(recommendation)
                 
                 st.markdown("**Catatan Penting:**")
-                st.warning("""
-- Prediksi ini didasarkan pada data historis dan model statistik.
-- Faktor eksternal seperti kondisi ekonomi, kebijakan perusahaan, dan peristiwa global dapat mempengaruhi harga saham secara signifikan.
-- Selalu lakukan analisis tambahan dan konsultasikan dengan penasihat keuangan sebelum membuat keputusan investasi.
+                st.warning(f"""
+- Prediksi ini didasarkan pada data historis dan model statistik CNN-GRU.
+- Faktor eksternal seperti kondisi makroekonomi, kebijakan moneter, dan sentimen pasar global dapat mempengaruhi harga {asset_type.lower()} secara signifikan.
+- Selalu lakukan analisis fundamental & teknikal mandiri sebelum membuat keputusan investasi.
                 """, icon=":material/edit_note:")
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
