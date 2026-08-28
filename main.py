@@ -165,22 +165,47 @@ def get_period_slice(df, days):
     except Exception:
         return df.tail(min(len(df), max(2, min(days, 30))))
 
+def extract_1d_array(data):
+    if data is None:
+        return np.array([], dtype=float)
+    if isinstance(data, pd.DataFrame):
+        data = data.iloc[:, 0]
+    if isinstance(data, pd.Series):
+        arr = pd.to_numeric(data, errors='coerce').dropna().values
+    else:
+        arr = np.asarray(data, dtype=float)
+    arr = arr.squeeze().ravel()
+    return arr[~np.isnan(arr)]
+
 def calculate_vwap_series(df_slice):
     if df_slice is None or df_slice.empty:
-        return pd.Series(dtype=float)
+        return np.array([], dtype=float)
     try:
-        high = df_slice['High'] if 'High' in df_slice.columns else df_slice['Close']
-        low = df_slice['Low'] if 'Low' in df_slice.columns else df_slice['Close']
-        close = df_slice['Close']
-        vol = df_slice['Volume'] if 'Volume' in df_slice.columns else pd.Series(1, index=df_slice.index)
+        close_arr = extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
+        if len(close_arr) == 0:
+            return np.array([], dtype=float)
         
-        tp = (high + low + close) / 3.0
-        cum_tp_vol = (tp * vol).cumsum()
-        cum_vol = vol.cumsum().replace(0, np.nan)
+        high_arr = extract_1d_array(df_slice['High']) if 'High' in df_slice.columns else close_arr
+        low_arr = extract_1d_array(df_slice['Low']) if 'Low' in df_slice.columns else close_arr
+        vol_arr = extract_1d_array(df_slice['Volume']) if 'Volume' in df_slice.columns else np.ones_like(close_arr)
+
+        min_len = min(len(close_arr), len(high_arr), len(low_arr), len(vol_arr))
+        if min_len == 0:
+            return close_arr
+        c = close_arr[:min_len]
+        h = high_arr[:min_len]
+        l = low_arr[:min_len]
+        v = vol_arr[:min_len]
+
+        tp = (h + l + c) / 3.0
+        cum_tp_vol = np.cumsum(tp * v)
+        cum_vol = np.cumsum(v)
+        cum_vol[cum_vol == 0] = np.nan
         vwap = cum_tp_vol / cum_vol
-        return vwap.fillna(close)
+        vwap[np.isnan(vwap)] = c[np.isnan(vwap)]
+        return vwap
     except Exception:
-        return df_slice['Close']
+        return extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
 
 def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=True, height=1.3):
     fig, ax = plt.subplots(figsize=(2.5, height), dpi=100)
@@ -189,20 +214,24 @@ def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=Tru
     
     color = '#00C853' if is_positive else '#D50000'
     
-    if series is None or len(series) == 0:
+    y = extract_1d_array(series)
+
+    if len(y) == 0:
         ax.text(0.5, 0.5, '-', ha='center', va='center', fontsize=9, color='#888')
-    elif len(series) == 1:
-        ax.scatter([0], [series.iloc[0]], color=color, s=20)
+    elif len(y) == 1:
+        ax.scatter([0], [y[0]], color=color, s=20)
     else:
-        x = np.arange(len(series))
-        y = series.values
+        x = np.arange(len(y), dtype=float)
         if chart_type == 'bar':
             ax.bar(x, y, color=color, alpha=0.75, width=0.8)
         else:
             ax.plot(x, y, color=color, linewidth=2.0)
             if fill:
-                min_y = np.nanmin(y)
-                ax.fill_between(x, y, min_y, color=color, alpha=0.15)
+                min_y = float(np.min(y))
+                try:
+                    ax.fill_between(x, y, min_y, color=color, alpha=0.15)
+                except Exception:
+                    pass
                 
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -577,28 +606,28 @@ def main(stock):
                 st.info('Import Library Utama: `time`, `numpy`, `pandas`, `yfinance`, `PIL` untuk pengelolaan data dasar, manipulasi array, serta penampilan gambar.', icon=":material/code:")
                 st.warning('Import Framework ML & Visualisasi: `streamlit`, `tensorflow`, `matplotlib`, `sklearn`, `streamlit_option_menu` untuk pemodelan CNN-GRU dan antarmuka web interaktif.', icon=":material/extension:")
             
-            # Workflow Diagram
-            st.subheader("Diagram Alur Kerja")
-            mermaid_code = """
-            graph TD
-                A([🚀 Input Kode Saham / Kripto]) --> B{Deteksi Jenis Aset}
-                B -->|Saham IDX / Global| C1[Scraping Data via yfinance]
-                B -->|Aset Kripto| C2[Scraping Data via crypto-yfinance / yf]
-                C1 --> D[Ringkasan Metrik Pasar, Performa & Grafik Mini Sparkline 1D-YTD]
-                C2 --> D
-                D --> E[2. Pengumpulan Data: Rentang Pelatihan s.d 30 Tahun]
-                E --> F[3. Pra-pemrosesan Data: Normalisasi MinMaxScaler & Windowing Lookback]
-                F --> G[4. Perancangan Model: Conv1D + GRU + Dropout + Dense]
-                G --> H[5. Pelatihan Model: Adam Optimizer & Loss Function MSE]
-                H --> I[6. Evaluasi Model Multi-Metrik: Akurasi, MAPE, RMSE, MAE, R2, MDA]
-                I --> J{Evaluasi Kualitas Model}
-                J -->|Akurasi Positif & Optimal| K[7. Visualisasi Prediksi Multi-Horizon: 1D - 180D]
-                J -->|Akurasi Rendah / Negatif| L[Saran Penyesuaian Epoch / Batch / Data]
-                K --> M[8. Interpretasi Tren Pasar & Rekomendasi Investasi]
-                L --> E
-                M --> N([🎯 Selesai / Ganti Kode Aset & Auto Reset Cache])
-            """
-            st.code(mermaid_code, language='mermaid')
+            with st.popover("📊 Diagram Alur Kerja (Workflow)"):
+                mermaid_code = """
+                graph TD
+                    A([🚀 Input Kode Saham / Kripto]) --> B{Deteksi Jenis Aset}
+                    B -->|Saham IDX / Global| C1[Scraping Data via yfinance]
+                    B -->|Aset Kripto| C2[Scraping Data via crypto-yfinance / yf]
+                    C1 --> D[Ringkasan Metrik Pasar, Performa & Grafik Mini Sparkline 1D-YTD]
+                    C2 --> D
+                    D --> E[2. Pengumpulan Data: Rentang Pelatihan s.d 30 Tahun]
+                    E --> F[3. Pra-pemrosesan Data: Normalisasi MinMaxScaler & Windowing Lookback]
+                    F --> G[4. Perancangan Model: Conv1D + GRU + Dropout + Dense]
+                    G --> H[5. Pelatihan Model: Adam Optimizer & Loss Function MSE]
+                    H --> I[6. Evaluasi Model Multi-Metrik: Akurasi, MAPE, RMSE, MAE, R2, MDA]
+                    I --> J{Evaluasi Kualitas Model}
+                    J -->|Akurasi Positif & Optimal| K[7. Visualisasi Prediksi Multi-Horizon: 1D - 180D]
+                    J -->|Akurasi Rendah / Negatif| L[Saran Penyesuaian Epoch / Batch / Data]
+                    K --> M[8. Interpretasi Tren Pasar & Rekomendasi Investasi]
+                    L --> E
+                    M --> N([🎯 Selesai / Ganti Kode Aset & Auto Reset Cache])
+                """
+                st.code(mermaid_code, language='mermaid')
+            
             st.success("Library berhasil diimpor")
 
     with st.expander("2. Pengumpulan Data"):
