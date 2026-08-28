@@ -246,6 +246,65 @@ def calculate_vwap_series(df_slice):
     except Exception:
         return extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
 
+def calculate_atr_series(df_slice, period=14):
+    if df_slice is None or df_slice.empty:
+        return np.array([], dtype=float)
+    try:
+        close_arr = extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
+        n = len(close_arr)
+        if n == 0:
+            return np.array([], dtype=float)
+        high_arr = extract_1d_array(df_slice['High']) if 'High' in df_slice.columns else close_arr
+        low_arr = extract_1d_array(df_slice['Low']) if 'Low' in df_slice.columns else close_arr
+        
+        min_len = min(len(close_arr), len(high_arr), len(low_arr))
+        c = close_arr[:min_len]
+        h = high_arr[:min_len]
+        l = low_arr[:min_len]
+        
+        if min_len < 2:
+            return np.array([max(0.0, h[0] - l[0])], dtype=float)
+            
+        tr = np.zeros(min_len)
+        tr[0] = h[0] - l[0]
+        for i in range(1, min_len):
+            tr[i] = max(h[i] - l[i], abs(h[i] - c[i-1]), abs(l[i] - c[i-1]))
+            
+        atr = pd.Series(tr).ewm(span=min(period, max(2, min_len)), adjust=False).mean().values
+        return atr
+    except Exception:
+        return np.array([], dtype=float)
+
+def calculate_delta_volume_series(df_slice):
+    if df_slice is None or df_slice.empty:
+        return np.array([], dtype=float)
+    try:
+        close_arr = extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
+        n = len(close_arr)
+        if n == 0:
+            return np.array([], dtype=float)
+        open_arr = extract_1d_array(df_slice['Open']) if 'Open' in df_slice.columns else None
+        vol_arr = extract_1d_array(df_slice['Volume']) if 'Volume' in df_slice.columns else np.ones(n)
+        
+        min_len = min(len(close_arr), len(vol_arr))
+        c = close_arr[:min_len]
+        v = vol_arr[:min_len]
+        
+        delta_vol = np.zeros(min_len)
+        for i in range(min_len):
+            if open_arr is not None and i < len(open_arr) and not np.isnan(open_arr[i]):
+                is_up = c[i] >= open_arr[i]
+            elif i > 0:
+                is_up = c[i] >= c[i-1]
+            else:
+                is_up = True
+            delta_vol[i] = v[i] if is_up else -v[i]
+            
+        cum_delta = np.cumsum(delta_vol)
+        return cum_delta
+    except Exception:
+        return np.array([], dtype=float)
+
 def get_bar_colors_for_volume(df_slice):
     if df_slice is None or df_slice.empty:
         return None
@@ -270,12 +329,53 @@ def get_bar_colors_for_volume(df_slice):
     except Exception:
         return None
 
-def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=True, height=1.3, bar_colors=None):
+def render_combined_price_vwap_sparkline(close_series, vwap_series, is_positive=True, height=1.3):
     fig, ax = plt.subplots(figsize=(2.5, height), dpi=100)
     fig.patch.set_facecolor('none')
     ax.set_facecolor('none')
     
-    color = '#00C853' if is_positive else '#D50000'
+    color_close = '#00C853' if is_positive else '#D50000'
+    color_vwap = '#00B0FF' # Warna biru khas untuk VWAP
+    
+    y_close = extract_1d_array(close_series)
+    y_vwap = extract_1d_array(vwap_series)
+    
+    if len(y_close) == 0:
+        ax.text(0.5, 0.5, '-', ha='center', va='center', fontsize=9, color='#888')
+    elif len(y_close) == 1:
+        ax.scatter([0], [y_close[0]], color=color_close, s=22)
+        if len(y_vwap) > 0:
+            ax.scatter([0], [y_vwap[0]], color=color_vwap, s=16)
+    else:
+        x = np.arange(len(y_close), dtype=float)
+        # Plot Close Price with subtle gradient fill
+        ax.plot(x, y_close, color=color_close, linewidth=2.0)
+        min_y = float(np.min(y_close))
+        try:
+            ax.fill_between(x, y_close, min_y, color=color_close, alpha=0.12)
+        except Exception:
+            pass
+            
+        # Plot VWAP line (Blue dashed)
+        if len(y_vwap) == len(y_close):
+            ax.plot(x, y_vwap, color=color_vwap, linewidth=1.7, linestyle='--')
+            
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.tight_layout(pad=0.1)
+    return fig
+
+def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=True, height=1.3, bar_colors=None, line_color=None):
+    fig, ax = plt.subplots(figsize=(2.5, height), dpi=100)
+    fig.patch.set_facecolor('none')
+    ax.set_facecolor('none')
+    
+    if line_color is not None:
+        color = line_color
+    else:
+        color = '#00C853' if is_positive else '#D50000'
     
     y = extract_1d_array(series)
 
@@ -506,75 +606,176 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     ))
 
     # Trace 2: Harga Pengujian
+    last_test_date = None
+    last_test_price = None
     if actual_dates is not None and y_pred is not None and len(actual_dates) > 0:
         a_dates = actual_dates
         p_prices = extract_1d_array(y_pred)
         n_a = min(len(a_dates), len(p_prices))
-        fig.add_trace(go.Scatter(
-            x=a_dates[:n_a],
-            y=p_prices[:n_a],
-            mode='lines',
-            name='Harga Pengujian',
-            line=dict(color='#B16ED0', width=2.2),
-            hoverinfo='text',
-            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Harga Pengujian:</b> {smart_format(p, prefix=curr_prefix)}" for d, p in zip(a_dates[:n_a], p_prices[:n_a])]
-        ))
+        if n_a > 0:
+            last_test_date = a_dates[n_a - 1]
+            last_test_price = p_prices[n_a - 1]
+            fig.add_trace(go.Scatter(
+                x=a_dates[:n_a],
+                y=p_prices[:n_a],
+                mode='lines',
+                name='Harga Pengujian (Uji)',
+                line=dict(color='#B16ED0', width=2.2),
+                hoverinfo='text',
+                hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Harga Pengujian:</b> {smart_format(p, prefix=curr_prefix)}" for d, p in zip(a_dates[:n_a], p_prices[:n_a])]
+            ))
 
-    # Trace 3: Harga Prediksi
     f_dates = date_range
     f_prices = extract_1d_array(forecast)
     n_f = min(len(f_dates), len(f_prices))
-    fig.add_trace(go.Scatter(
-        x=f_dates[:n_f],
-        y=f_prices[:n_f],
-        mode='lines+markers',
-        name='Harga Prediksi',
-        line=dict(color='#107EDE', width=2.5),
-        marker=dict(size=5, color='#107EDE'),
-        hoverinfo='text',
-        hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Harga Prediksi:</b> {smart_format(p, prefix=curr_prefix)}" for d, p in zip(f_dates[:n_f], f_prices[:n_f])]
-    ))
 
-    # High / Low on Forecast
     if n_f > 0:
-        max_f_idx = int(np.argmax(f_prices[:n_f]))
-        min_f_idx = int(np.argmin(f_prices[:n_f]))
+        # Garis Titik-titik (Dotted) Penghubung dari Uji Terakhir ke Titik Prediksi Pertama
+        if last_test_date is not None and last_test_price is not None:
+            fig.add_trace(go.Scatter(
+                x=[last_test_date, f_dates[0]],
+                y=[last_test_price, f_prices[0]],
+                mode='lines',
+                name='Transisi Estimasi',
+                line=dict(color='#107EDE', width=2.0, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
+        # Trace 3: Harga Prediksi Model
+        hover_pred_fc = []
+        for d, p in zip(f_dates[:n_f], f_prices[:n_f]):
+            if last_test_price is not None and last_test_price > 0:
+                pct_chg = ((p - last_test_price) / last_test_price) * 100.0
+                sign = "+" if pct_chg >= 0 else ""
+                chg_str = f"<br><b>Perubahan dari Basis:</b> {sign}{pct_chg:.2f}%"
+            else:
+                chg_str = ""
+            hover_pred_fc.append(f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Harga Prediksi Model:</b> {smart_format(p, prefix=curr_prefix)}{chg_str}")
 
         fig.add_trace(go.Scatter(
-            x=[f_dates[max_f_idx]],
-            y=[f_prices[max_f_idx]],
-            mode='markers+text',
-            name='Prediksi Tertinggi',
-            marker=dict(color='#00C853', size=11, symbol='triangle-up'),
-            text=[f"▲ High: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"],
-            textposition="top center",
-            textfont=dict(color='#00C853', size=12),
+            x=f_dates[:n_f],
+            y=f_prices[:n_f],
+            mode='lines+markers',
+            name='Harga Prediksi Model',
+            line=dict(color='#107EDE', width=2.5),
+            marker=dict(size=7, color='#107EDE'),
             hoverinfo='text',
-            hovertext=[f"<b>Prediksi Tertinggi</b><br>Tanggal: {f_dates[max_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"]
+            hovertext=hover_pred_fc
         ))
 
-        fig.add_trace(go.Scatter(
-            x=[f_dates[min_f_idx]],
-            y=[f_prices[min_f_idx]],
-            mode='markers+text',
-            name='Prediksi Terendah',
-            marker=dict(color='#D50000', size=11, symbol='triangle-down'),
-            text=[f"▼ Low: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"],
-            textposition="bottom center",
-            textfont=dict(color='#D50000', size=12),
-            hoverinfo='text',
-            hovertext=[f"<b>Prediksi Terendah</b><br>Tanggal: {f_dates[min_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"]
-        ))
+        # Trace 4: Garis Duplikat Proyeksi Tren Aktual (Berdasarkan Persentase Return Prediksi)
+        if len(h_prices) > 0:
+            last_act_dt = h_dates[-1]
+            last_act_pr = h_prices[-1]
+            base_ref = last_test_price if (last_test_price is not None and last_test_price > 0) else f_prices[0]
+            
+            # Hitung proyeksi harga nominal riil mengikuti dinamika persentase model
+            proj_prices = []
+            for p in f_prices[:n_f]:
+                pct_rel = (p - base_ref) / base_ref if base_ref > 0 else 0.0
+                proj_val = last_act_pr * (1.0 + pct_rel)
+                proj_prices.append(proj_val)
+            proj_prices = np.array(proj_prices)
+
+            is_proj_up = (proj_prices[-1] >= last_act_pr)
+            proj_color = '#00C853' if is_proj_up else '#D50000'
+            proj_label = f"Proyeksi Tren Aktual ({'▲ Naik' if is_proj_up else '▼ Turun'})"
+
+            # Connect smoothly from last actual date
+            proj_x = [last_act_dt] + list(f_dates[:n_f])
+            proj_y = [last_act_pr] + list(proj_prices)
+
+            hover_proj = [f"<b>Tanggal:</b> {last_act_dt.strftime('%Y-%m-%d')}<br><b>Titik Awal Aktual:</b> {smart_format(last_act_pr, prefix=curr_prefix)}"]
+            for d, pr in zip(f_dates[:n_f], proj_prices):
+                pct_from_act = ((pr - last_act_pr) / last_act_pr) * 100.0 if last_act_pr > 0 else 0.0
+                sign = "+" if pct_from_act >= 0 else ""
+                hover_proj.append(
+                    f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br>"
+                    f"<b>Proyeksi Harga Aktual:</b> {smart_format(pr, prefix=curr_prefix)}<br>"
+                    f"<b>Estimasi Return:</b> {sign}{pct_from_act:.2f}%"
+                )
+
+            fig.add_trace(go.Scatter(
+                x=proj_x,
+                y=proj_y,
+                mode='lines+markers',
+                name=proj_label,
+                line=dict(color=proj_color, width=2.6, dash='dash'),
+                marker=dict(size=7, color=proj_color),
+                hoverinfo='text',
+                hovertext=hover_proj
+            ))
+
+        # Markers High / Low yang Rapi dan Tidak Bertumpukan
+        if n_f == 1:
+            # 1 Hari Forecast: Hanya tampilkan target tunggal
+            fig.add_trace(go.Scatter(
+                x=[f_dates[0]],
+                y=[f_prices[0]],
+                mode='markers+text',
+                name='Target Prediksi Model',
+                marker=dict(color='#107EDE', size=11, symbol='circle'),
+                text=[f"🎯 Model: {smart_format(f_prices[0], prefix=curr_prefix)}"],
+                textposition="top center",
+                textfont=dict(color='#107EDE', size=12),
+                hoverinfo='skip'
+            ))
+        else:
+            max_f_idx = int(np.argmax(f_prices[:n_f]))
+            min_f_idx = int(np.argmin(f_prices[:n_f]))
+
+            if max_f_idx != min_f_idx:
+                fig.add_trace(go.Scatter(
+                    x=[f_dates[max_f_idx]],
+                    y=[f_prices[max_f_idx]],
+                    mode='markers+text',
+                    name='Prediksi Tertinggi',
+                    marker=dict(color='#00C853', size=11, symbol='triangle-up'),
+                    text=[f"▲ High: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"],
+                    textposition="top center",
+                    textfont=dict(color='#00C853', size=12),
+                    hoverinfo='text',
+                    hovertext=[f"<b>Prediksi Tertinggi</b><br>Tanggal: {f_dates[max_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"]
+                ))
+
+                fig.add_trace(go.Scatter(
+                    x=[f_dates[min_f_idx]],
+                    y=[f_prices[min_f_idx]],
+                    mode='markers+text',
+                    name='Prediksi Terendah',
+                    marker=dict(color='#D50000', size=11, symbol='triangle-down'),
+                    text=[f"▼ Low: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"],
+                    textposition="bottom center",
+                    textfont=dict(color='#D50000', size=12),
+                    hoverinfo='text',
+                    hovertext=[f"<b>Prediksi Terendah</b><br>Tanggal: {f_dates[min_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"]
+                ))
+            else:
+                fig.add_trace(go.Scatter(
+                    x=[f_dates[0]],
+                    y=[f_prices[0]],
+                    mode='markers+text',
+                    name='Target Prediksi Model',
+                    marker=dict(color='#107EDE', size=11, symbol='circle'),
+                    text=[f"🎯 Target: {smart_format(f_prices[0], prefix=curr_prefix)}"],
+                    textposition="top center",
+                    textfont=dict(color='#107EDE', size=12),
+                    hoverinfo='skip'
+                ))
 
     fig.update_layout(
-        title=dict(text='Prediksi Pergerakan Harga ke Depan', font=dict(size=16, color='#222')),
+        title=dict(
+            text='Prediksi Pergerakan Harga ke Depan & Proyeksi Tren',
+            font=dict(size=16, color='#222')
+        ),
         xaxis=dict(title="Tanggal", showgrid=True, gridcolor='#F0F0F0'),
         yaxis=dict(title=y_label, showgrid=True, gridcolor='#F0F0F0'),
         hovermode='x unified',
-        margin=dict(l=40, r=40, t=50, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=80, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="center", x=0.5),
         template='plotly_white',
-        height=460
+        height=480
     )
     return fig
 
@@ -1030,7 +1231,7 @@ def main(stock):
         st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
 
         # Toggle Grafik Mini Tren Riwayat Harga, VWAP & Volume (1D, 1W, 1M, 90D, YTD)
-        with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP & Volume (1D, 1W, 1M, 90D, YTD)", expanded=False):
+        with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, Delta & ATR (1D, 1W, 1M, 90D, YTD)", expanded=False):
             if not data.empty:
                 slice_1d = get_period_slice(data, 1)
                 slice_1w = get_period_slice(data, 7)
@@ -1052,46 +1253,92 @@ def main(stock):
                     ("1 Tahun (YTD)", slice_ytd, chg_ytd_s)
                 ]
                 
-                # 1. Baris Chart Harga (Close)
-                st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Close):**")
+                # 1. Baris Chart Harga & VWAP Disatukan
+                st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} & VWAP (Garis Hijau/Merah: Close, Garis Biru Putus-putus: VWAP):**")
                 cols_price = st.columns(5)
                 for col, (label, s_df, chg) in zip(cols_price, period_slices):
                     with col:
+                        c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
+                        mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
+                        mean_c_str = smart_format(mean_c, prefix=curr_prefix)
                         badge_sign = ("▲ +" if (chg is not None and chg >= 0) else "▼ ") + f"{chg:.2f}%" if chg is not None else "-"
-                        st.caption(f"{label} ({badge_sign})")
+                        st.caption(f"{label} ({badge_sign} | Rata2: {mean_c_str})")
                         if not s_df.empty and 'Close' in s_df.columns:
                             is_pos = (chg >= 0) if chg is not None else True
-                            fig = render_sparkline_chart(s_df['Close'], is_positive=is_pos, chart_type='line')
+                            vwap_s = calculate_vwap_series(s_df)
+                            fig = render_combined_price_vwap_sparkline(s_df['Close'], vwap_s, is_positive=is_pos)
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
                             st.write("-")
                             
-                # 2. Baris Chart VWAP
-                st.markdown(f"**2. Grafik Mini VWAP (Volume Weighted Average Price):**")
-                cols_vwap = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_vwap, period_slices):
+                # 2. Baris Chart Volume Transaksi (dengan Persentase Perubahan & Rata-rata)
+                st.markdown(f"**2. Grafik Mini Volume Transaksi (Bar Hijau Kenaikan & Merah Penurunan):**")
+                cols_vol = st.columns(5)
+                for col, (label, s_df, chg) in zip(cols_vol, period_slices):
                     with col:
-                        st.caption(f"VWAP {label}")
-                        if not s_df.empty:
-                            vwap_s = calculate_vwap_series(s_df)
-                            is_pos = (vwap_s[-1] >= vwap_s[0]) if len(vwap_s) >= 2 else (chg >= 0 if chg is not None else True)
-                            fig = render_sparkline_chart(vwap_s, is_positive=is_pos, chart_type='line')
+                        vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
+                        if len(vol_arr) >= 2 and vol_arr[0] > 0:
+                            v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
+                            v_sign = ("▲ +" if v_chg >= 0 else "▼ ") + f"{v_chg:.2f}%"
+                        else:
+                            v_sign = "-"
+                        mean_v = np.mean(vol_arr) if len(vol_arr) > 0 else 0.0
+                        mean_v_str = format_market_cap(mean_v)
+                        st.caption(f"Volume {label} ({v_sign} | Rata2: {mean_v_str})")
+                        if not s_df.empty and 'Volume' in s_df.columns:
+                            bar_cols = get_bar_colors_for_volume(s_df)
+                            is_pos = (chg >= 0) if chg is not None else True
+                            fig = render_sparkline_chart(s_df['Volume'], is_positive=is_pos, chart_type='bar', bar_colors=bar_cols)
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
                             st.write("-")
 
-                # 3. Baris Chart Volume
-                st.markdown(f"**3. Grafik Mini Volume Transaksi:**")
-                cols_vol = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_vol, period_slices):
+                # 3. Baris Chart Delta Volume (Akumulasi Net Beli / Jual)
+                st.markdown(f"**3. Grafik Mini Delta Volume (Akumulasi Net Buy vs Sell Volume):**")
+                cols_delta = st.columns(5)
+                for col, (label, s_df, chg) in zip(cols_delta, period_slices):
                     with col:
-                        st.caption(f"Volume {label}")
-                        if not s_df.empty and 'Volume' in s_df.columns:
-                            bar_cols = get_bar_colors_for_volume(s_df)
-                            is_pos = (chg >= 0) if chg is not None else True
-                            fig = render_sparkline_chart(s_df['Volume'], is_positive=is_pos, chart_type='bar', bar_colors=bar_cols)
+                        delta_arr = calculate_delta_volume_series(s_df)
+                        if len(delta_arr) > 0:
+                            net_delta = delta_arr[-1]
+                            d_pos = net_delta >= 0
+                            d_sign = ("▲ +" if d_pos else "▼ -") + format_market_cap(abs(net_delta))
+                            tag = "Net Buy" if d_pos else "Net Sell"
+                        else:
+                            d_pos = True
+                            d_sign = "-"
+                            tag = "N/A"
+                        st.caption(f"Delta {label} ({d_sign} {tag})")
+                        if len(delta_arr) > 0:
+                            d_color = '#00C853' if d_pos else '#D50000'
+                            fig = render_sparkline_chart(delta_arr, is_positive=d_pos, chart_type='line', line_color=d_color)
+                            st.pyplot(fig)
+                            plt.close(fig)
+                        else:
+                            st.write("-")
+
+                # 4. Baris Chart ATR (Average True Range - Volatilitas Pasar)
+                st.markdown(f"**4. Grafik Mini ATR (Average True Range - Indikator Volatilitas Pasar):**")
+                cols_atr = st.columns(5)
+                for col, (label, s_df, chg) in zip(cols_atr, period_slices):
+                    with col:
+                        atr_arr = calculate_atr_series(s_df)
+                        if len(atr_arr) > 0:
+                            latest_atr = atr_arr[-1]
+                            latest_atr_str = smart_format(latest_atr, prefix=curr_prefix)
+                            if len(atr_arr) >= 2 and atr_arr[0] > 0:
+                                atr_chg = ((atr_arr[-1] - atr_arr[0]) / atr_arr[0]) * 100.0
+                                atr_sign = ("▲ +" if atr_chg >= 0 else "▼ ") + f"{atr_chg:.2f}%"
+                            else:
+                                atr_sign = "-"
+                        else:
+                            latest_atr_str = "-"
+                            atr_sign = "-"
+                        st.caption(f"ATR {label} ({latest_atr_str} | {atr_sign})")
+                        if len(atr_arr) > 0:
+                            fig = render_sparkline_chart(atr_arr, is_positive=True, chart_type='line', line_color='#FFA000')
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
