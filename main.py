@@ -363,8 +363,31 @@ def main(stock):
 
         if days >= 120:
 
-            def preprocess_data(data, seq_length):
-                scaler = MinMaxScaler(feature_range=(0, 1))
+            with st.popover("⚙️ Pengaturan Panjang Sekuens (Lookback)"):
+                seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+                max_seq = max(5, min(180, len(data) // 3))
+                valid_seq_options = [s for s in seq_options if s <= max_seq]
+                if not valid_seq_options:
+                    valid_seq_options = [30]
+                default_seq = 60 if 60 in valid_seq_options else valid_seq_options[-1]
+                seq_length = st.select_slider("Panjang Sekuens (Hari)", options=valid_seq_options, value=default_seq)
+                st.info('Rekomendasi Default: **60 Hari** (~3 Bulan bursa). Rentang Paling Akurat: **30–60 Hari**.', icon=":material/recommend:")
+                st.warning('Ket: Sekuens terlalu pendek (<15) kehilangan konteks tren, sekuens terlalu panjang (>120) menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
+
+            with st.popover("⚙️ Pengaturan Normalisasi (MinMaxScaler)"):
+                scaler_option = st.radio("Rentang Normalisasi:", options=["(0, 1)", "(-1, 1)"], index=0)
+                feature_range = (0, 1) if scaler_option == "(0, 1)" else (-1, 1)
+                st.info('Rekomendasi Default: **(0, 1)**. Sangat optimal untuk aktivasi ReLU dan harga aset non-negatif.', icon=":material/recommend:")
+                st.warning('Ket: Rentang (-1, 1) dapat digunakan jika menggunakan aktivasi simetris tanh di seluruh model.', icon=":material/tune:")
+
+            with st.popover("⚙️ Pengaturan Pembagian Data (Train/Test Split)"):
+                split_pct = st.select_slider("Persentase Data Pelatihan (%)", options=[50, 60, 70, 75, 80, 85, 90], value=80)
+                train_ratio = split_pct / 100.0
+                st.info('Rekomendasi Default: **80% Pelatihan : 20% Pengujian** (Rentang Paling Akurat: **75%–85%**).', icon=":material/recommend:")
+                st.warning('Ket: Porsi pelatihan <70% membuat model kurang belajar, porsi >85% membuat data pengujian terlalu sedikit untuk validasi.', icon=":material/pie_chart:")
+
+            def preprocess_data(data, seq_length, feature_range, train_ratio):
+                scaler = MinMaxScaler(feature_range=feature_range)
                 scaled_data = scaler.fit_transform(data['Close'].values.reshape(-1, 1))
 
                 X, y = [], []
@@ -374,7 +397,7 @@ def main(stock):
 
                 X, y = np.array(X), np.array(y)
 
-                split = int(0.8 * len(X))
+                split = int(train_ratio * len(X))
                 x_train, x_test = X[:split], X[split:]
                 y_train, y_test = y[:split], y[split:]
 
@@ -383,8 +406,7 @@ def main(stock):
 
                 return x_train, x_test, y_train, y_test, scaler
 
-            seq_length = 60
-            x_train, x_test, y_train, y_test, scaler = preprocess_data(data, seq_length)
+            x_train, x_test, y_train, y_test, scaler = preprocess_data(data, seq_length, feature_range, train_ratio)
 
             # Menghitung persentase data pelatihan dan pengujian
             total_samples = x_train.shape[0] + x_test.shape[0]
@@ -392,8 +414,8 @@ def main(stock):
             test_percentage = (x_test.shape[0] / total_samples) * 100
 
             with st.popover("Detail Pra-pemrosesan Data"):
-                st.info('Ukuran Panjang Sekuens (`seq_length`): Menggunakan 60 hari historis untuk memprediksi harga saham pada hari berikutnya.', icon=":material/timeline:")
-                st.warning('Pembagian Data: Data di-scaling dengan `MinMaxScaler` (0-1) lalu dibagi menjadi 80% data pelatihan dan 20% data pengujian.', icon=":material/pie_chart:")
+                st.info(f'Ukuran Panjang Sekuens (`seq_length`): Menggunakan **{seq_length}** hari historis untuk memprediksi harga saham pada hari berikutnya.', icon=":material/timeline:")
+                st.warning(f'Pembagian Data: Data di-scaling dengan `MinMaxScaler{feature_range}` lalu dibagi menjadi **{train_percentage:.1f}%** data pelatihan ({x_train.shape[0]} sampel) dan **{test_percentage:.1f}%** data pengujian ({x_test.shape[0]} sampel).', icon=":material/pie_chart:")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -401,7 +423,7 @@ def main(stock):
                 st.metric("Persentase data pelatihan", f"{train_percentage:.2f}%")
             with col2:
                 st.metric("Ukuran data pengujian", f"{x_test.shape[0]} sampel")
-                st.metric("Persentase data pelatihan", f"{test_percentage:.2f}%")
+                st.metric("Persentase data pengujian", f"{test_percentage:.2f}%")
 
             st.success("Pra-pemrosesan Data selesai!")
         else:
@@ -411,30 +433,68 @@ def main(stock):
 
         if days >= 120:
 
-            st.subheader("Arsitektur Model:")
+            st.subheader("Arsitektur Model & Pengaturan Hyperparameter:")
 
-            def create_model(seq_length):
+            with st.popover("⚙️ Pengaturan Lapisan Conv1D"):
+                conv_filters = st.select_slider("Jumlah Filter Conv1D", options=[16, 32, 48, 64, 96, 128, 256], value=64)
+                kernel_size = st.select_slider("Ukuran Kernel (Kernel Size)", options=[2, 3, 4, 5, 7], value=3)
+                conv_activation = st.selectbox("Fungsi Aktivasi Conv1D", options=["relu", "tanh", "elu", "linear"], index=0)
+                st.info('Rekomendasi Default: **64 filter**, **kernel 3**, aktivasi **ReLU** (Rentang Akurat: 32–64 filter, kernel 3–5).', icon=":material/recommend:")
+                st.warning('Ket: Filter Conv1D mengekstrak fitur spasial & momentum lokal jangka pendek dari sekuens harga.', icon=":material/layers:")
+
+            with st.popover("⚙️ Pengaturan Lapisan GRU"):
+                gru_units_1 = st.select_slider("Unit GRU Layer 1", options=[16, 32, 50, 64, 96, 128, 256], value=50)
+                gru_units_2 = st.select_slider("Unit GRU Layer 2", options=[16, 32, 50, 64, 96, 128, 256], value=50)
+                st.info('Rekomendasi Default: **50 Unit** per layer (Rentang Akurat: **32–64 Unit**).', icon=":material/recommend:")
+                st.warning('Ket: GRU menangkap ketergantungan temporal jangka panjang. Nilai di atas 128 meningkatkan risiko overfitting pada deret waktu.', icon=":material/memory:")
+
+            with st.popover("⚙️ Pengaturan Regularisasi Dropout"):
+                dropout_rate = st.select_slider("Tingkat Dropout (Dropout Rate)", options=[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5], value=0.2)
+                st.info('Rekomendasi Default: **0.2 (20%)** (Rentang Akurat: **0.1–0.3**).', icon=":material/recommend:")
+                st.warning('Ket: Dropout 0.2 mencegah ko-adaptasi neuron yang menyebabkan overfitting tanpa membuang representasi penting.', icon=":material/security:")
+
+            def create_model(seq_len, c_filters, k_size, c_act, g_u1, g_u2, d_rate):
                 model = Sequential([
-                    Conv1D(filters=64,
-                        kernel_size=3,
-                        activation='relu',
-                        input_shape=(seq_length, 1)),
-                    GRU(50, return_sequences=True),
-                    Dropout(0.2),
-                    GRU(50),
+                    Conv1D(filters=c_filters,
+                        kernel_size=k_size,
+                        activation=c_act,
+                        input_shape=(seq_len, 1)),
+                    GRU(g_u1, return_sequences=True),
+                    Dropout(d_rate),
+                    GRU(g_u2),
                     Dense(1)
                 ])
 
                 model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
                 return model
 
-            def get_model(seq_length):
-                return create_model(seq_length)
+            # Buat model untuk inspeksi parameter sebelum pelatihan
+            preview_model = create_model(seq_length, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
+            total_params = preview_model.count_params()
 
-            with st.popover("Detail Arsitektur Model CNN-GRU"):
-                st.info('Lapisan Ekstraksi Fitur: `Conv1D` (64 filter, kernel size 3, aktivasi ReLU) untuk mengekstrak pola fitur spasial dari sekuens data.', icon=":material/layers:")
-                st.warning('Lapisan Memori & Regulasi: Lapisan `GRU` (50 unit) berurutan dengan `Dropout` (0.2) untuk menangkap pola temporal sekuensial tanpa overfitting.', icon=":material/memory:")
-                st.warning('Lapisan Output & Kompilasi: Lapisan `Dense` (1 unit output) dikompilasi dengan optimizer `Adam(learning_rate=0.001)` dan loss function `MSE`.', icon=":material/check_circle:")
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                st.metric("Total Parameter Model (Trainable)", f"{total_params:,}")
+            with col_p2:
+                st.metric("Jumlah Lapisan (Layers)", f"{len(preview_model.layers)} Lapisan")
+
+            with st.popover("Detail Arsitektur & Ringkasan Parameter"):
+                st.info(f'Lapisan Ekstraksi Fitur: `Conv1D` ({conv_filters} filter, kernel {kernel_size}, aktivasi {conv_activation}) untuk mengekstrak pola fitur spasial dari sekuens {seq_length} hari.', icon=":material/layers:")
+                st.warning(f'Lapisan Memori & Regulasi: `GRU` ({gru_units_1} unit, seq) $\\rightarrow$ `Dropout` ({dropout_rate}) $\\rightarrow$ `GRU` ({gru_units_2} unit) untuk menangkap pola temporal sekuensial.', icon=":material/memory:")
+                st.warning('Lapisan Output & Kompilasi: Lapisan `Dense(1)` dikompilasi dengan optimizer `Adam(learning_rate=0.001)` dan loss function `MSE`.', icon=":material/check_circle:")
+                
+                layer_data = []
+                for lyr in preview_model.layers:
+                    layer_data.append({
+                        "Nama Lapisan": lyr.name,
+                        "Tipe Lapisan": lyr.__class__.__name__,
+                        "Bentuk Output": str(lyr.output_shape),
+                        "Jumlah Parameter": f"{lyr.count_params():,}"
+                    })
+                st.dataframe(pd.DataFrame(layer_data), use_container_width=True)
+
+            def get_model(seq_len):
+                return create_model(seq_len, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
 
             st.success("Perancangan Model CNN-GRU selesai!")
 
