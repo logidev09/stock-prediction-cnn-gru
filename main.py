@@ -75,10 +75,48 @@ def smart_format(val, default_decimals=2, prefix=""):
 
     return f"{prefix}{sign}0.0{sub_str}{sig_digits}"
 
+def flatten_df_columns(df):
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    return df
+
+def ensure_datetime_index(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = flatten_df_columns(df)
+    
+    if isinstance(df.index, pd.DatetimeIndex):
+        df.index.name = 'Date'
+        return df
+        
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+    elif 'Datetime' in df.columns:
+        df['Datetime'] = pd.to_datetime(df['Datetime'])
+        df.set_index('Datetime', inplace=True)
+        df.index.name = 'Date'
+    elif 'index' in df.columns:
+        df['index'] = pd.to_datetime(df['index'])
+        df.set_index('index', inplace=True)
+        df.index.name = 'Date'
+    else:
+        try:
+            df.index = pd.to_datetime(df.index)
+            df.index.name = 'Date'
+        except Exception:
+            pass
+    return df
+
 def format_df_for_display(df):
     if df is None or df.empty:
         return df
     display_df = df.copy()
+    if isinstance(display_df.index, pd.DatetimeIndex):
+        display_df.index = display_df.index.strftime('%Y-%m-%d')
     for col in display_df.columns:
         if pd.api.types.is_numeric_dtype(display_df[col]):
             display_df[col] = display_df[col].apply(lambda x: smart_format(x))
@@ -771,10 +809,8 @@ def main(stock):
             quick_df = yf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
         
         if not quick_df.empty:
-            if 'Date' in quick_df.columns:
-                last_dt = pd.to_datetime(quick_df['Date'].iloc[-1]).strftime('%Y-%m-%d')
-            else:
-                last_dt = pd.to_datetime(quick_df.index[-1]).strftime('%Y-%m-%d')
+            quick_df = ensure_datetime_index(quick_df)
+            last_dt = pd.to_datetime(quick_df.index[-1]).strftime('%Y-%m-%d')
             last_pr = safe_float(quick_df['Close'].iloc[-1])
             last_pr_str = smart_format(last_pr, prefix=curr_prefix)
             if 'Volume' in quick_df.columns:
@@ -883,36 +919,20 @@ def main(stock):
                     st.error(f"Tidak dapat memuat data untuk {ticker}. Silakan coba simbol lain.")
                     return pd.DataFrame()
                     
-                data = flatten_df_columns(data)
-                data.reset_index(inplace=True)
-                
-                if 'Date' not in data.columns:
-                    if 'Datetime' in data.columns:
-                        data.rename(columns={'Datetime': 'Date'}, inplace=True)
-                    else:
-                        data['Date'] = data.index
-                        data.reset_index(drop=True, inplace=True)
-                    
-                if 'Date' in data.columns:
-                    data['Date'] = pd.to_datetime(data['Date'])
-                    
+                data = ensure_datetime_index(data)
                 return data
             except Exception as e:
                 st.error(f"Error loading data for {ticker}: {str(e)}")
                 return pd.DataFrame()
 
         # DATA HISTORY
-        full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d"))
+        full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
 
         st.subheader("Data keseluruhan")
         st.write("Mulai")
         st.write(format_df_for_display(full_data.head(1)))
         st.write("Hingga")
         st.write(format_df_for_display(full_data.tail(1)))
-
-        # Mengubah index menjadi datetime untuk memudahkan plotting
-        full_data['Date'] = pd.to_datetime(full_data['Date'])
-        full_data.set_index('Date', inplace=True)
 
         # Plot Interaktif dengan Plotly untuk data keseluruhan
         fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', '#31333F', curr_prefix=curr_prefix)
@@ -990,14 +1010,10 @@ def main(stock):
 
         # Fitur Beta
         try:
-            data = load_training_data(stock, start_date, end_date)
+            data = load_training_data(stock, start_date, end_date).copy()
         except Exception as e:
             print(f"Error loading data for {stock}: {e}")
-            data = load_training_data(stock, start_date, end_date)
-
-        # Mengubah index menjadi datetime untuk data pelatihan
-        data['Date'] = pd.to_datetime(data['Date'])
-        data.set_index('Date', inplace=True)
+            data = load_training_data(stock, start_date, end_date).copy()
 
         if not data.empty:
             actual_days = (data.index[-1] - data.index[0]).days
