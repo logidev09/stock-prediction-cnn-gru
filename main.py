@@ -151,6 +151,66 @@ def get_change_pct(df, days_lookback):
     except Exception:
         return None
 
+def get_period_slice(df, days):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    try:
+        last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        start_dt = last_dt - pd.Timedelta(days=days)
+        dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+        sub = df[dates >= start_dt].copy()
+        if len(sub) < 2 and len(df) >= 2:
+            return df.tail(min(len(df), max(2, min(days, 30))))
+        return sub
+    except Exception:
+        return df.tail(min(len(df), max(2, min(days, 30))))
+
+def calculate_vwap_series(df_slice):
+    if df_slice is None or df_slice.empty:
+        return pd.Series(dtype=float)
+    try:
+        high = df_slice['High'] if 'High' in df_slice.columns else df_slice['Close']
+        low = df_slice['Low'] if 'Low' in df_slice.columns else df_slice['Close']
+        close = df_slice['Close']
+        vol = df_slice['Volume'] if 'Volume' in df_slice.columns else pd.Series(1, index=df_slice.index)
+        
+        tp = (high + low + close) / 3.0
+        cum_tp_vol = (tp * vol).cumsum()
+        cum_vol = vol.cumsum().replace(0, np.nan)
+        vwap = cum_tp_vol / cum_vol
+        return vwap.fillna(close)
+    except Exception:
+        return df_slice['Close']
+
+def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=True, height=1.3):
+    fig, ax = plt.subplots(figsize=(2.5, height), dpi=100)
+    fig.patch.set_facecolor('none')
+    ax.set_facecolor('none')
+    
+    color = '#00C853' if is_positive else '#D50000'
+    
+    if series is None or len(series) == 0:
+        ax.text(0.5, 0.5, '-', ha='center', va='center', fontsize=9, color='#888')
+    elif len(series) == 1:
+        ax.scatter([0], [series.iloc[0]], color=color, s=20)
+    else:
+        x = np.arange(len(series))
+        y = series.values
+        if chart_type == 'bar':
+            ax.bar(x, y, color=color, alpha=0.75, width=0.8)
+        else:
+            ax.plot(x, y, color=color, linewidth=2.0)
+            if fill:
+                min_y = np.nanmin(y)
+                ax.fill_between(x, y, min_y, color=color, alpha=0.15)
+                
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.tight_layout(pad=0.1)
+    return fig
+
 def get_metric_badge_info(category):
     colors = {
         'sangat_baik': ('#00C853', 'rgba(0, 200, 83, 0.08)', '🟢 Sangat Baik'),
@@ -347,6 +407,7 @@ def evaluate_model_performance(y_test, y_pred):
         "cat_rmse": cat_rmse,
         "cat_mse": cat_mse,
         "cat_mae": cat_mae,
+        "cat_nrmse": cat_nrmse,
         "cat_mda": cat_mda,
         "label": label,
         "status": status,
@@ -446,6 +507,68 @@ def main(stock):
                         <div style="font-size: 15px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
                     </div>
                     """, unsafe_allow_html=True)
+    # Toggle Grafik Mini Tren Riwayat Harga, VWAP & Volume (1D, 1W, 1M, 90D, YTD)
+    with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP & Volume (1D, 1W, 1M, 90D, YTD)", expanded=False):
+        if not quick_df.empty:
+            slice_1d = get_period_slice(quick_df, 1)
+            slice_1w = get_period_slice(quick_df, 7)
+            slice_1m = get_period_slice(quick_df, 30)
+            slice_90d = get_period_slice(quick_df, 90)
+            slice_ytd = get_period_slice(quick_df, 365)
+            
+            period_slices = [
+                ("1 Hari (1D)", slice_1d, chg_1d),
+                ("1 Minggu (1W)", slice_1w, chg_1w),
+                ("1 Bulan (1M)", slice_1m, chg_1m),
+                ("90 Hari (90D)", slice_90d, chg_90d),
+                ("1 Tahun (YTD)", slice_ytd, chg_ytd)
+            ]
+            
+            # 1. Baris Chart Harga (Close)
+            st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Close):**")
+            cols_price = st.columns(5)
+            for col, (label, s_df, chg) in zip(cols_price, period_slices):
+                with col:
+                    badge_sign = ("▲ +" if chg >= 0 else "▼ ") + f"{chg:.2f}%" if chg is not None else "-"
+                    st.caption(f"{label} ({badge_sign})")
+                    if not s_df.empty and 'Close' in s_df.columns:
+                        is_pos = (chg >= 0) if chg is not None else True
+                        fig = render_sparkline_chart(s_df['Close'], is_positive=is_pos, chart_type='line')
+                        st.pyplot(fig)
+                        plt.close(fig)
+                    else:
+                        st.write("-")
+                        
+            # 2. Baris Chart VWAP
+            st.markdown(f"**2. Grafik Mini VWAP (Volume Weighted Average Price):**")
+            cols_vwap = st.columns(5)
+            for col, (label, s_df, chg) in zip(cols_vwap, period_slices):
+                with col:
+                    st.caption(f"VWAP {label}")
+                    if not s_df.empty:
+                        vwap_s = calculate_vwap_series(s_df)
+                        is_pos = (vwap_s.iloc[-1] >= vwap_s.iloc[0]) if len(vwap_s) >= 2 else (chg >= 0 if chg is not None else True)
+                        fig = render_sparkline_chart(vwap_s, is_positive=is_pos, chart_type='line')
+                        st.pyplot(fig)
+                        plt.close(fig)
+                    else:
+                        st.write("-")
+
+            # 3. Baris Chart Volume
+            st.markdown(f"**3. Grafik Mini Volume Transaksi:**")
+            cols_vol = st.columns(5)
+            for col, (label, s_df, chg) in zip(cols_vol, period_slices):
+                with col:
+                    st.caption(f"Volume {label}")
+                    if not s_df.empty and 'Volume' in s_df.columns:
+                        is_pos = (chg >= 0) if chg is not None else True
+                        fig = render_sparkline_chart(s_df['Volume'], is_positive=is_pos, chart_type='bar')
+                        st.pyplot(fig)
+                        plt.close(fig)
+                    else:
+                        st.write("-")
+        else:
+            st.info("Data riwayat belum tersedia untuk menampilkan grafik mini sparkline.")
     st.write("")
 
     with st.expander("1. Persiapan Lingkungan"):
@@ -458,13 +581,22 @@ def main(stock):
             st.subheader("Diagram Alur Kerja")
             mermaid_code = """
             graph TD
-                A[Input Saham/Crypto] --> B[Pengumpulan Data]
-                B --> C[Pra-pemrosesan Data]
-                C --> D[Perancangan Model CNN-GRU]
-                D --> E[Pelatihan Model]
-                E --> F[Evaluasi Model]
-                F --> G[Visualisasi Prediksi]
-                G --> H[Interpretasi Hasil]
+                A([🚀 Input Kode Saham / Kripto]) --> B{Deteksi Jenis Aset}
+                B -->|Saham IDX / Global| C1[Scraping Data via yfinance]
+                B -->|Aset Kripto| C2[Scraping Data via crypto-yfinance / yf]
+                C1 --> D[Ringkasan Metrik Pasar, Performa & Grafik Mini Sparkline 1D-YTD]
+                C2 --> D
+                D --> E[2. Pengumpulan Data: Rentang Pelatihan s.d 30 Tahun]
+                E --> F[3. Pra-pemrosesan Data: Normalisasi MinMaxScaler & Windowing Lookback]
+                F --> G[4. Perancangan Model: Conv1D + GRU + Dropout + Dense]
+                G --> H[5. Pelatihan Model: Adam Optimizer & Loss Function MSE]
+                H --> I[6. Evaluasi Model Multi-Metrik: Akurasi, MAPE, RMSE, MAE, R2, MDA]
+                I --> J{Evaluasi Kualitas Model}
+                J -->|Akurasi Positif & Optimal| K[7. Visualisasi Prediksi Multi-Horizon: 1D - 180D]
+                J -->|Akurasi Rendah / Negatif| L[Saran Penyesuaian Epoch / Batch / Data]
+                K --> M[8. Interpretasi Tren Pasar & Rekomendasi Investasi]
+                L --> E
+                M --> N([🎯 Selesai / Ganti Kode Aset & Auto Reset Cache])
             """
             st.code(mermaid_code, language='mermaid')
             st.success("Library berhasil diimpor")
@@ -946,7 +1078,7 @@ def main(stock):
                 if history:
                     end_time = time.time()
                     training_time = end_time - start_time
-                    st.success(f"Pelatihan Model selesai! Waktu komputasi total: {training_time:.2f} detik")
+                    st.success(f"▲ Pelatihan Model CNN-GRU selesai! Waktu komputasi total: {training_time:.2f} detik")
                     st.session_state.training_completed = True
 
                 # Menambahkan nilai default untuk ketika tombol sudah ditekan
@@ -965,42 +1097,46 @@ def main(stock):
                 y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
                 actual_dates = data.index[-len(y_test):]
 
-                perf_eval = evaluate_model_performance(y_test, y_pred)
+                perf_eval = evaluate_model_performance(y_test, y_pred) or {}
 
                 st.subheader("Metrik Evaluasi:")
 
                 m_col1, m_col2, m_col3 = st.columns(3)
                 with m_col1:
-                    render_colored_metric_card("Akurasi Model", f"{perf_eval['accuracy']:.3f}%", perf_eval['cat_acc'], "Tingkat ketepatan prediksi")
+                    render_colored_metric_card("Akurasi Model", f"{perf_eval.get('accuracy', 0):.3f}%", perf_eval.get('cat_acc', 'neutral'), "Tingkat ketepatan prediksi")
                 with m_col2:
-                    r2_disp = f"{perf_eval['r2']:.3f}" if perf_eval['r2'] is not None else "-"
-                    render_colored_metric_card("R2 Score", r2_disp, perf_eval['cat_r2'], "Koefisien determinasi varians")
+                    r2_disp = f"{perf_eval.get('r2'):.3f}" if perf_eval.get('r2') is not None else "-"
+                    render_colored_metric_card("R2 Score", r2_disp, perf_eval.get('cat_r2', 'neutral'), "Koefisien determinasi varians")
                 with m_col3:
-                    render_colored_metric_card("MAPE", f"{perf_eval['mape']:.3f}", perf_eval['cat_mape'], "Mean Absolute Percentage Err")
+                    render_colored_metric_card("MAPE", f"{perf_eval.get('mape', 0):.3f}", perf_eval.get('cat_mape', 'neutral'), "Mean Absolute Percentage Err")
 
                 m_col4, m_col5, m_col6 = st.columns(3)
                 with m_col4:
-                    render_colored_metric_card("RMSE", smart_format(perf_eval['rmse'], default_decimals=3), perf_eval['cat_rmse'], "Root Mean Squared Error")
+                    render_colored_metric_card("RMSE", smart_format(perf_eval.get('rmse', 0), default_decimals=3), perf_eval.get('cat_rmse', 'neutral'), "Root Mean Squared Error")
                 with m_col5:
-                    render_colored_metric_card("MAE", smart_format(perf_eval['mae'], default_decimals=3), perf_eval['cat_mae'], "Mean Absolute Error")
+                    render_colored_metric_card("MAE", smart_format(perf_eval.get('mae', 0), default_decimals=3), perf_eval.get('cat_mae', 'neutral'), "Mean Absolute Error")
                 with m_col6:
-                    render_colored_metric_card("MSE", smart_format(perf_eval['mse'], default_decimals=3), perf_eval['cat_mse'], "Mean Squared Error")
+                    render_colored_metric_card("MSE", smart_format(perf_eval.get('mse', 0), default_decimals=3), perf_eval.get('cat_mse', 'neutral'), "Mean Squared Error")
 
-                if perf_eval['mda'] is not None:
+                if perf_eval.get('mda') is not None:
                     m_col7, m_col8 = st.columns(2)
                     with m_col7:
-                        render_colored_metric_card("Akurasi Arah Tren (MDA)", f"{perf_eval['mda']:.1f}%", perf_eval['cat_mda'], "Ketepatan arah naik/turun")
+                        render_colored_metric_card("Akurasi Arah Tren (MDA)", f"▲ {perf_eval.get('mda', 0):.1f}%" if perf_eval.get('mda', 0) >= 50 else f"▼ {perf_eval.get('mda', 0):.1f}%", perf_eval.get('cat_mda', 'neutral'), "Ketepatan arah naik/turun")
                     with m_col8:
-                        render_colored_metric_card("NRMSE", f"{perf_eval['nrmse_pct']:.2f}%", perf_eval['cat_nrmse'], "Normalized RMSE rasio harga")
+                        render_colored_metric_card("NRMSE", f"{perf_eval.get('nrmse_pct', 0):.2f}%", perf_eval.get('cat_nrmse', 'neutral'), "Normalized RMSE rasio harga")
 
-                if perf_eval['status'] == 'success':
-                    st.success(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
-                elif perf_eval['status'] == 'info':
-                    st.info(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
-                elif perf_eval['status'] == 'warning':
-                    st.warning(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_down:")
+                comp_score = perf_eval.get('composite_score', 0)
+                perf_lbl = perf_eval.get('label', 'Performa')
+                perf_stat = perf_eval.get('status', 'info')
+
+                if perf_stat == 'success':
+                    st.success(f"▲ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_stat == 'info':
+                    st.info(f"▲ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_stat == 'warning':
+                    st.warning(f"▼ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_down:")
                 else:
-                    st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
+                    st.error(f"▼ {perf_lbl}", icon=":material/thumb_down:")
 
                 with st.popover("Tampilkan Tabel Perbandingan"):
                     comparison_df = pd.DataFrame({
@@ -1121,24 +1257,24 @@ def main(stock):
                                     'Harga Prediksi': [smart_format(v) for v in forecast.flatten()]
                                 })
 
-                        perf_eval_sub = evaluate_model_performance(y_test[:forecast_days], y_pred[:forecast_days])
+                        perf_eval_sub = evaluate_model_performance(y_test[:forecast_days], y_pred[:forecast_days]) or {}
 
                         p_col1, p_col2, p_col3 = st.columns(3)
                         with p_col1:
-                            render_colored_metric_card("Akurasi Horizon", f"{perf_eval_sub['accuracy']:.3f}%", perf_eval_sub['cat_acc'], f"Ketepatan {forecast_period}")
+                            render_colored_metric_card("Akurasi Horizon", f"{perf_eval_sub.get('accuracy', 0):.3f}%", perf_eval_sub.get('cat_acc', 'neutral'), f"Ketepatan {forecast_period}")
                         with p_col2:
-                            r2_sub_disp = f"{perf_eval_sub['r2']:.3f}" if perf_eval_sub['r2'] is not None else "-"
-                            render_colored_metric_card("R2 Score", r2_sub_disp, perf_eval_sub['cat_r2'], "Koefisien determinasi")
+                            r2_sub_disp = f"{perf_eval_sub.get('r2'):.3f}" if perf_eval_sub.get('r2') is not None else "-"
+                            render_colored_metric_card("R2 Score", r2_sub_disp, perf_eval_sub.get('cat_r2', 'neutral'), "Koefisien determinasi")
                         with p_col3:
-                            render_colored_metric_card("MAPE", f"{perf_eval_sub['mape']:.3f}", perf_eval_sub['cat_mape'], "Mean Abs Percentage Err")
+                            render_colored_metric_card("MAPE", f"{perf_eval_sub.get('mape', 0):.3f}", perf_eval_sub.get('cat_mape', 'neutral'), "Mean Abs Percentage Err")
 
                         p_col4, p_col5, p_col6 = st.columns(3)
                         with p_col4:
-                            render_colored_metric_card("RMSE", smart_format(perf_eval_sub['rmse'], default_decimals=3), perf_eval_sub['cat_rmse'], "Root Mean Sq Err")
+                            render_colored_metric_card("RMSE", smart_format(perf_eval_sub.get('rmse', 0), default_decimals=3), perf_eval_sub.get('cat_rmse', 'neutral'), "Root Mean Sq Err")
                         with p_col5:
-                            render_colored_metric_card("MAE", smart_format(perf_eval_sub['mae'], default_decimals=3), perf_eval_sub['cat_mae'], "Mean Absolute Error")
+                            render_colored_metric_card("MAE", smart_format(perf_eval_sub.get('mae', 0), default_decimals=3), perf_eval_sub.get('cat_mae', 'neutral'), "Mean Absolute Error")
                         with p_col6:
-                            render_colored_metric_card("MSE", smart_format(perf_eval_sub['mse'], default_decimals=3), perf_eval_sub['cat_mse'], "Mean Squared Error")
+                            render_colored_metric_card("MSE", smart_format(perf_eval_sub.get('mse', 0), default_decimals=3), perf_eval_sub.get('cat_mse', 'neutral'), "Mean Squared Error")
 
                         with st.popover("Tampilkan Tabel Prediksi"):
                             st.dataframe(table_df, use_container_width=True)
@@ -1151,14 +1287,18 @@ def main(stock):
                         with col2:
                             st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
 
-                        if perf_eval_sub['status'] == 'success':
-                            st.success(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
-                        elif perf_eval_sub['status'] == 'info':
-                            st.info(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
-                        elif perf_eval_sub['status'] == 'warning':
-                            st.warning(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_down:")
+                        comp_sub = perf_eval_sub.get('composite_score', 0)
+                        sub_lbl = perf_eval_sub.get('label', 'Performa')
+                        sub_stat = perf_eval_sub.get('status', 'info')
+
+                        if sub_stat == 'success':
+                            st.success(f"▲ {sub_lbl} (Skor Akumulasi: {comp_sub:.1f} / 100)", icon=":material/thumb_up:")
+                        elif sub_stat == 'info':
+                            st.info(f"▲ {sub_lbl} (Skor Akumulasi: {comp_sub:.1f} / 100)", icon=":material/thumb_up:")
+                        elif sub_stat == 'warning':
+                            st.warning(f"▼ {sub_lbl} (Skor Akumulasi: {comp_sub:.1f} / 100)", icon=":material/thumb_down:")
                         else:
-                            st.error(f"{perf_eval_sub['label']}", icon=":material/thumb_down:")
+                            st.error(f"▼ {sub_lbl}", icon=":material/thumb_down:")
 
                     else:
                         st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali jumlah hari pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
