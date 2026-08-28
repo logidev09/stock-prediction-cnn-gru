@@ -267,9 +267,9 @@ def main(stock):
         )
 
         if selected_method == "Rentang Tahun / Bulan / Hari":
-            years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 4)
-            months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1)
-            days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 31, 0)
+            years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 30)
+            months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
+            days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 30, 0)
             
             days = (years_ago * 365) + (months_ago * 30) + days_ago
             if days < 120:
@@ -277,17 +277,17 @@ def main(stock):
             start_date_obj = end_date_obj - timedelta(days=days)
 
         elif selected_method == "Gunakan Jumlah Hari Terakhir":
-            default_val = 1800 if stock in ["BBCA.JK", "BMRI.JK", "BBNI.JK"] else 1470
+            default_val = 365 * 30
             days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val)
             start_date_obj = end_date_obj - timedelta(days=days)
 
         else: # "Pilih Tanggal dengan Kalender"
-            default_start = end_date_obj - timedelta(days=1470) # 1470 hari yang lalu (~4 tahun 1 bulan yang lalu)
+            default_start = end_date_obj - timedelta(days=365*30) # 30 tahun yang lalu
             
             start_date_selected = st.date_input(
                 "Tanggal Mulai Pelatihan",
                 value=default_start,
-                min_value=date(2000, 1, 1),
+                min_value=date(1990, 1, 1),
                 max_value=end_date_obj
             )
             
@@ -298,8 +298,8 @@ def main(stock):
 
         with st.popover("Tips Memilih Data Pelatihan"):
             st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
-            st.warning('Ket: Secara Default menggunakan 4 Tahun 1 Bulan atau 1470 hari yang lalu, yang hanya dapat melakukan prediksi hingga 6 Bulan kedepan.', icon=":material/pan_tool_alt:")
-            st.warning('Ket: Jika menggunakan Kalender, secara default tanggal mulai diset ke 1470 hari yang lalu (sekitar 4 Tahun 1 Bulan) dan tanggal selesai diset ke tanggal terbaru.', icon=":material/calendar_month:")
+            st.warning('Ket: Secara Default menggunakan 30 Tahun yang lalu (atau data historis maksimal yang tersedia).', icon=":material/pan_tool_alt:")
+            st.warning('Ket: Jika menggunakan Kalender, secara default tanggal mulai diset ke 30 Tahun yang lalu dan tanggal selesai diset ke tanggal terbaru.', icon=":material/calendar_month:")
             st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
 
         # Mengubah Format Tanggal data Pelatihan
@@ -465,12 +465,20 @@ def main(stock):
                     Dense(1)
                 ])
 
+                try:
+                    model.build(input_shape=(None, seq_len, 1))
+                except Exception:
+                    pass
+
                 model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
                 return model
 
             # Buat model untuk inspeksi parameter sebelum pelatihan
             preview_model = create_model(seq_length, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
-            total_params = preview_model.count_params()
+            try:
+                total_params = preview_model.count_params()
+            except Exception:
+                total_params = 0
 
             col_p1, col_p2 = st.columns(2)
             with col_p1:
@@ -485,11 +493,25 @@ def main(stock):
                 
                 layer_data = []
                 for lyr in preview_model.layers:
+                    shape_str = "-"
+                    try:
+                        if hasattr(lyr, 'output_shape') and lyr.output_shape is not None:
+                            shape_str = str(lyr.output_shape)
+                        elif hasattr(lyr, 'compute_output_shape'):
+                            shape_str = str(lyr.compute_output_shape((None, seq_length, 1)))
+                    except Exception:
+                        shape_str = "-"
+                    
+                    try:
+                        param_cnt = f"{lyr.count_params():,}"
+                    except Exception:
+                        param_cnt = "-"
+
                     layer_data.append({
                         "Nama Lapisan": lyr.name,
                         "Tipe Lapisan": lyr.__class__.__name__,
-                        "Bentuk Output": str(lyr.output_shape),
-                        "Jumlah Parameter": f"{lyr.count_params():,}"
+                        "Bentuk Output": shape_str,
+                        "Jumlah Parameter": param_cnt
                     })
                 st.dataframe(pd.DataFrame(layer_data), use_container_width=True)
 
