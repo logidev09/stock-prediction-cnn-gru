@@ -18,7 +18,7 @@ from tensorflow.keras.models import Sequential
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import LambdaCallback
 from tensorflow.keras.layers import Conv1D, GRU, Dense, Dropout
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score, mean_absolute_error
 
 # Helper function to safely extract scalar from pandas Series
 def safe_float(value):
@@ -151,60 +151,161 @@ def get_change_pct(df, days_lookback):
     except Exception:
         return None
 
+def get_metric_badge_info(category):
+    colors = {
+        'sangat_baik': ('#00C853', 'rgba(0, 200, 83, 0.08)', '🟢 Sangat Baik'),
+        'baik': ('#FFB300', 'rgba(255, 179, 0, 0.08)', '🟡 Baik'),
+        'cukup_baik': ('#00B0FF', 'rgba(0, 176, 255, 0.08)', '🔵 Cukup Baik'),
+        'kurang_baik': ('#FF6D00', 'rgba(255, 109, 0, 0.08)', '🟠 Kurang Baik'),
+        'buruk': ('#D50000', 'rgba(213, 0, 0, 0.08)', '🔴 Buruk'),
+        'neutral': ('#9E9E9E', 'rgba(158, 158, 158, 0.08)', '⚪ N/A')
+    }
+    return colors.get(category, colors['neutral'])
+
+def render_colored_metric_card(label, value_str, category, subtext=""):
+    border_color, bg_color, badge_text = get_metric_badge_info(category)
+    subtext_html = f'<div style="font-size: 11px; color: #777; margin-top: 2px;">{subtext}</div>' if subtext else ''
+    html_code = f"""
+    <div style="background-color: {bg_color}; border-left: 4px solid {border_color}; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 12px; color: #555; font-weight: 600;">{label}</span>
+            <span style="font-size: 11px; font-weight: 700; color: {border_color};">{badge_text}</span>
+        </div>
+        <div style="font-size: 19px; font-weight: 700; color: #222; margin-top: 4px;">{value_str}</div>
+        {subtext_html}
+    </div>
+    """
+    st.markdown(html_code, unsafe_allow_html=True)
+
 def evaluate_model_performance(y_test, y_pred):
+    n_samples = len(y_test)
+    if n_samples == 0:
+        return None
+
     mse = mean_squared_error(y_test, y_pred)
     rmse = np.sqrt(mse)
-    r2 = r2_score(y_test, y_pred)
+    mae = mean_absolute_error(y_test, y_pred)
     mape = mean_absolute_percentage_error(y_test, y_pred)
-    accuracy = 100 - mape * 100
+    accuracy = 100 - (mape * 100)
     
     mean_actual = np.mean(y_test)
     nrmse = (rmse / mean_actual) if mean_actual > 0 else 1.0
+    nrmse_pct = nrmse * 100.0
+    
+    # R2 Score calculation (hanya valid jika sampel >= 3)
+    if n_samples >= 3:
+        try:
+            r2 = r2_score(y_test, y_pred)
+            if np.isnan(r2) or np.isinf(r2):
+                r2 = None
+        except Exception:
+            r2 = None
+    else:
+        r2 = None
 
-    # 1. Skor Akurasi (0-100)
+    # Akurasi Arah Pergerakan (Mean Directional Accuracy) untuk sampel >= 2
+    if n_samples >= 2:
+        actual_dir = np.diff(y_test) >= 0
+        pred_dir = np.diff(y_pred) >= 0
+        mda = np.mean(actual_dir == pred_dir) * 100.0
+    else:
+        mda = None
+
+    # 1. Klasifikasi Warna & Skor Akurasi
     if accuracy >= 95:
+        cat_acc = 'sangat_baik'
         score_acc = 100
     elif accuracy >= 85:
+        cat_acc = 'baik'
         score_acc = 80 + (accuracy - 85) * 2
-    elif accuracy >= 70:
-        score_acc = 60 + (accuracy - 70) * (20 / 15)
+    elif accuracy >= 75:
+        cat_acc = 'cukup_baik'
+        score_acc = 60 + (accuracy - 75) * 2
     elif accuracy >= 50:
-        score_acc = 40 + (accuracy - 50) * (20 / 20)
+        cat_acc = 'kurang_baik'
+        score_acc = 40 + (accuracy - 50) * (20 / 25)
     elif accuracy > 0:
+        cat_acc = 'buruk'
         score_acc = (accuracy / 50) * 40
     else:
+        cat_acc = 'buruk'
         score_acc = 0
 
-    # 2. Skor R2 (0-100)
-    if r2 >= 0.95:
-        score_r2 = 100
-    elif r2 >= 0.85:
-        score_r2 = 80 + (r2 - 0.85) * 200
-    elif r2 >= 0.70:
-        score_r2 = 60 + (r2 - 0.70) * (20 / 0.15)
-    elif r2 >= 0.50:
-        score_r2 = 40 + (r2 - 0.50) * (20 / 0.20)
-    elif r2 > 0:
-        score_r2 = (r2 / 0.50) * 40
+    # 2. Klasifikasi Warna MAPE
+    if mape <= 0.05:
+        cat_mape = 'sangat_baik'
+    elif mape <= 0.15:
+        cat_mape = 'baik'
+    elif mape <= 0.25:
+        cat_mape = 'cukup_baik'
+    elif mape <= 0.50:
+        cat_mape = 'kurang_baik'
     else:
-        score_r2 = 0
+        cat_mape = 'buruk'
 
-    # 3. Skor NRMSE (0-100)
+    # 3. Klasifikasi Warna NRMSE (juga menjadi basis warna RMSE, MAE, MSE)
     if nrmse <= 0.05:
+        cat_nrmse = 'sangat_baik'
         score_nrmse = 100
     elif nrmse <= 0.10:
+        cat_nrmse = 'baik'
         score_nrmse = 80 + (0.10 - nrmse) * (20 / 0.05)
     elif nrmse <= 0.20:
+        cat_nrmse = 'cukup_baik'
         score_nrmse = 60 + (0.20 - nrmse) * (20 / 0.10)
     elif nrmse <= 0.35:
+        cat_nrmse = 'kurang_baik'
         score_nrmse = 40 + (0.35 - nrmse) * (20 / 0.15)
     else:
+        cat_nrmse = 'buruk'
         score_nrmse = max(0, 40 - (nrmse - 0.35) * 40)
 
-    # Akumulasi Skor Gabungan: 45% Akurasi (MAPE), 35% R2, 20% NRMSE
-    composite_score = 0.45 * score_acc + 0.35 * score_r2 + 0.20 * score_nrmse
+    cat_rmse = cat_nrmse
+    cat_mse = cat_nrmse
+    cat_mae = cat_nrmse
 
-    if accuracy < 0 or r2 < -0.5:
+    # 4. Klasifikasi Warna & Skor R2
+    if r2 is not None:
+        if r2 >= 0.90:
+            cat_r2 = 'sangat_baik'
+            score_r2 = 100
+        elif r2 >= 0.75:
+            cat_r2 = 'baik'
+            score_r2 = 80 + (r2 - 0.75) * (20 / 0.15)
+        elif r2 >= 0.50:
+            cat_r2 = 'cukup_baik'
+            score_r2 = 60 + (r2 - 0.50) * (20 / 0.25)
+        elif r2 >= 0.0:
+            cat_r2 = 'kurang_baik'
+            score_r2 = 40 + (r2) * (20 / 0.50)
+        else:
+            cat_r2 = 'buruk'
+            score_r2 = max(0, 40 + r2 * 20)
+    else:
+        cat_r2 = 'neutral'
+        score_r2 = score_acc
+
+    # 5. Klasifikasi MDA
+    if mda is not None:
+        if mda >= 70:
+            cat_mda = 'sangat_baik'
+        elif mda >= 55:
+            cat_mda = 'baik'
+        elif mda >= 45:
+            cat_mda = 'cukup_baik'
+        else:
+            cat_mda = 'kurang_baik'
+    else:
+        cat_mda = 'neutral'
+
+    # Akumulasi Skor Gabungan:
+    if n_samples >= 10 and r2 is not None:
+        composite_score = 0.40 * score_acc + 0.35 * score_r2 + 0.25 * score_nrmse
+    else:
+        # Horizon singkat (1-9 hari): mengutamakan Akurasi & Rasio Error Nominal
+        composite_score = 0.60 * score_acc + 0.40 * score_nrmse
+
+    if accuracy < 0:
         label = "Performa: Sangat Buruk (Akurasi Negatif)"
         status = "error" # Merah
         badge = "🔴"
@@ -232,11 +333,21 @@ def evaluate_model_performance(y_test, y_pred):
     return {
         "mse": mse,
         "rmse": rmse,
+        "mae": mae,
         "r2": r2,
         "mape": mape,
         "accuracy": accuracy,
         "nrmse": nrmse,
+        "nrmse_pct": nrmse_pct,
+        "mda": mda,
         "composite_score": composite_score,
+        "cat_acc": cat_acc,
+        "cat_mape": cat_mape,
+        "cat_r2": cat_r2,
+        "cat_rmse": cat_rmse,
+        "cat_mse": cat_mse,
+        "cat_mae": cat_mae,
+        "cat_mda": cat_mda,
         "label": label,
         "status": status,
         "badge": badge
@@ -858,31 +969,46 @@ def main(stock):
 
                 st.subheader("Metrik Evaluasi:")
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("MSE", smart_format(perf_eval['mse'], default_decimals=3))
-                    st.metric("RMSE", smart_format(perf_eval['rmse'], default_decimals=3))
-                    st.metric("R2 Score", smart_format(perf_eval['r2'], default_decimals=3))
-                    st.metric("MAPE", smart_format(perf_eval['mape'], default_decimals=3))
-                    st.metric("Akurasi", f"{smart_format(perf_eval['accuracy'], default_decimals=3)}%")
+                m_col1, m_col2, m_col3 = st.columns(3)
+                with m_col1:
+                    render_colored_metric_card("Akurasi Model", f"{perf_eval['accuracy']:.3f}%", perf_eval['cat_acc'], "Tingkat ketepatan prediksi")
+                with m_col2:
+                    r2_disp = f"{perf_eval['r2']:.3f}" if perf_eval['r2'] is not None else "-"
+                    render_colored_metric_card("R2 Score", r2_disp, perf_eval['cat_r2'], "Koefisien determinasi varians")
+                with m_col3:
+                    render_colored_metric_card("MAPE", f"{perf_eval['mape']:.3f}", perf_eval['cat_mape'], "Mean Absolute Percentage Err")
 
-                with col2:
-                    # Menampilkan tabel perbandingan
+                m_col4, m_col5, m_col6 = st.columns(3)
+                with m_col4:
+                    render_colored_metric_card("RMSE", smart_format(perf_eval['rmse'], default_decimals=3), perf_eval['cat_rmse'], "Root Mean Squared Error")
+                with m_col5:
+                    render_colored_metric_card("MAE", smart_format(perf_eval['mae'], default_decimals=3), perf_eval['cat_mae'], "Mean Absolute Error")
+                with m_col6:
+                    render_colored_metric_card("MSE", smart_format(perf_eval['mse'], default_decimals=3), perf_eval['cat_mse'], "Mean Squared Error")
+
+                if perf_eval['mda'] is not None:
+                    m_col7, m_col8 = st.columns(2)
+                    with m_col7:
+                        render_colored_metric_card("Akurasi Arah Tren (MDA)", f"{perf_eval['mda']:.1f}%", perf_eval['cat_mda'], "Ketepatan arah naik/turun")
+                    with m_col8:
+                        render_colored_metric_card("NRMSE", f"{perf_eval['nrmse_pct']:.2f}%", perf_eval['cat_nrmse'], "Normalized RMSE rasio harga")
+
+                if perf_eval['status'] == 'success':
+                    st.success(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'info':
+                    st.info(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_eval['status'] == 'warning':
+                    st.warning(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_down:")
+                else:
+                    st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
+
+                with st.popover("Tampilkan Tabel Perbandingan"):
                     comparison_df = pd.DataFrame({
                         'Tanggal': actual_dates.strftime('%Y-%m-%d'),
                         'Harga Aktual': [smart_format(v) for v in y_test],
                         'Harga Prediksi': [smart_format(v) for v in y_pred]
                     })
-                    st.dataframe(comparison_df)
-
-                if perf_eval['status'] == 'success':
-                    st.success(f"{perf_eval['label']}", icon=":material/thumb_up:")
-                elif perf_eval['status'] == 'info':
-                    st.info(f"{perf_eval['label']}", icon=":material/thumb_up:")
-                elif perf_eval['status'] == 'warning':
-                    st.warning(f"{perf_eval['label']}", icon=":material/thumb_down:")
-                else:
-                    st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
+                    st.dataframe(comparison_df, use_container_width=True)
 
                 # Menampilkan Plot
                 fig, ax = plt.subplots(figsize=(14, 7))
@@ -997,17 +1123,25 @@ def main(stock):
 
                         perf_eval_sub = evaluate_model_performance(y_test[:forecast_days], y_pred[:forecast_days])
 
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("MSE", smart_format(perf_eval_sub['mse'], default_decimals=3))
-                            st.metric("MAPE", smart_format(perf_eval_sub['mape'], default_decimals=3))
-                            # Menampilkan tabel perbandingan
-                            with st.popover("Tampilkan Tabel"):
-                                st.dataframe(table_df)
-                        with col2:
-                            st.metric("RMSE", smart_format(perf_eval_sub['rmse'], default_decimals=3))
-                            st.metric("R2 Score", smart_format(perf_eval_sub['r2'], default_decimals=3))
-                            st.metric("Akurasi", f"{smart_format(perf_eval_sub['accuracy'], default_decimals=3)}%")
+                        p_col1, p_col2, p_col3 = st.columns(3)
+                        with p_col1:
+                            render_colored_metric_card("Akurasi Horizon", f"{perf_eval_sub['accuracy']:.3f}%", perf_eval_sub['cat_acc'], f"Ketepatan {forecast_period}")
+                        with p_col2:
+                            r2_sub_disp = f"{perf_eval_sub['r2']:.3f}" if perf_eval_sub['r2'] is not None else "-"
+                            render_colored_metric_card("R2 Score", r2_sub_disp, perf_eval_sub['cat_r2'], "Koefisien determinasi")
+                        with p_col3:
+                            render_colored_metric_card("MAPE", f"{perf_eval_sub['mape']:.3f}", perf_eval_sub['cat_mape'], "Mean Abs Percentage Err")
+
+                        p_col4, p_col5, p_col6 = st.columns(3)
+                        with p_col4:
+                            render_colored_metric_card("RMSE", smart_format(perf_eval_sub['rmse'], default_decimals=3), perf_eval_sub['cat_rmse'], "Root Mean Sq Err")
+                        with p_col5:
+                            render_colored_metric_card("MAE", smart_format(perf_eval_sub['mae'], default_decimals=3), perf_eval_sub['cat_mae'], "Mean Absolute Error")
+                        with p_col6:
+                            render_colored_metric_card("MSE", smart_format(perf_eval_sub['mse'], default_decimals=3), perf_eval_sub['cat_mse'], "Mean Squared Error")
+
+                        with st.popover("Tampilkan Tabel Prediksi"):
+                            st.dataframe(table_df, use_container_width=True)
 
                         st.subheader("Ringkasan Prediksi")
 
@@ -1018,11 +1152,11 @@ def main(stock):
                             st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
 
                         if perf_eval_sub['status'] == 'success':
-                            st.success(f"{perf_eval_sub['label']}", icon=":material/thumb_up:")
+                            st.success(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
                         elif perf_eval_sub['status'] == 'info':
-                            st.info(f"{perf_eval_sub['label']}", icon=":material/thumb_up:")
+                            st.info(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
                         elif perf_eval_sub['status'] == 'warning':
-                            st.warning(f"{perf_eval_sub['label']}", icon=":material/thumb_down:")
+                            st.warning(f"{perf_eval_sub['label']} (Skor Akumulasi: {perf_eval_sub['composite_score']:.1f} / 100)", icon=":material/thumb_down:")
                         else:
                             st.error(f"{perf_eval_sub['label']}", icon=":material/thumb_down:")
 
@@ -1069,11 +1203,11 @@ def main(stock):
                 st.write(interpretation)
 
                 if perf_eval['status'] == 'success':
-                    st.success(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                    st.success(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
                 elif perf_eval['status'] == 'info':
-                    st.info(f"{perf_eval['label']}", icon=":material/thumb_up:")
+                    st.info(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_up:")
                 elif perf_eval['status'] == 'warning':
-                    st.warning(f"{perf_eval['label']}", icon=":material/thumb_down:")
+                    st.warning(f"{perf_eval['label']} (Skor Akumulasi: {perf_eval['composite_score']:.1f} / 100)", icon=":material/thumb_down:")
                 else:
                     st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
 
