@@ -12,6 +12,7 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import date, timedelta
 from tensorflow.keras.optimizers import Adam
 from streamlit_option_menu import option_menu
@@ -796,6 +797,49 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
                 hovertext=hover_proj
             ))
 
+            # High dan Low di Proyeksi Tren Aktual
+            if len(proj_prices) > 0:
+                if len(proj_prices) == 1:
+                    fig.add_trace(go.Scatter(
+                        x=[f_dates[0]],
+                        y=[proj_prices[0]],
+                        mode='markers+text',
+                        name='Target Proyeksi',
+                        marker=dict(color=proj_color, size=10, symbol='diamond'),
+                        text=[f"🎯 Target: {smart_format(proj_prices[0], prefix=curr_prefix)}"],
+                        textposition="top center",
+                        textfont=dict(color=proj_color, size=11),
+                        hoverinfo='skip'
+                    ))
+                else:
+                    max_p_idx = int(np.argmax(proj_prices))
+                    min_p_idx = int(np.argmin(proj_prices))
+                    if max_p_idx != min_p_idx:
+                        fig.add_trace(go.Scatter(
+                            x=[f_dates[max_p_idx]],
+                            y=[proj_prices[max_p_idx]],
+                            mode='markers+text',
+                            name='Proyeksi Tertinggi (High)',
+                            marker=dict(color='#00C853', size=10, symbol='triangle-up'),
+                            text=[f"▲ Proyeksi High: {smart_format(proj_prices[max_p_idx], prefix=curr_prefix)}"],
+                            textposition="top center",
+                            textfont=dict(color='#00C853', size=11),
+                            hoverinfo='text',
+                            hovertext=[f"<b>Proyeksi Tertinggi (High)</b><br>Tanggal: {f_dates[max_p_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(proj_prices[max_p_idx], prefix=curr_prefix)}"]
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=[f_dates[min_p_idx]],
+                            y=[proj_prices[min_p_idx]],
+                            mode='markers+text',
+                            name='Proyeksi Terendah (Low)',
+                            marker=dict(color='#D50000', size=10, symbol='triangle-down'),
+                            text=[f"▼ Proyeksi Low: {smart_format(proj_prices[min_p_idx], prefix=curr_prefix)}"],
+                            textposition="bottom center",
+                            textfont=dict(color='#D50000', size=11),
+                            hoverinfo='text',
+                            hovertext=[f"<b>Proyeksi Terendah (Low)</b><br>Tanggal: {f_dates[min_p_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(proj_prices[min_p_idx], prefix=curr_prefix)}"]
+                        ))
+
     fig.update_layout(
         title=dict(
             text='Prediksi Pergerakan Harga ke Depan & Proyeksi Tren',
@@ -819,6 +863,127 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         template='plotly_white',
         height=480
     )
+    return fig
+
+def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="Crypto"):
+    if df is None or df.empty:
+        return go.Figure()
+        
+    dates = df.index if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+    close_arr = extract_1d_array(df['Close'] if 'Close' in df.columns else df.iloc[:, 0])
+    n = min(len(dates), len(close_arr))
+    if n == 0:
+        return go.Figure()
+        
+    dates = dates[:n]
+    close_arr = close_arr[:n]
+    vwap_arr = calculate_vwap_series(df)[:n]
+    vol_arr = extract_1d_array(df['Volume'])[:n] if 'Volume' in df.columns else np.zeros(n)
+    atr_arr = calculate_atr_series(df)[:n]
+    delta_vol, delta_cols = calculate_daily_delta_volume_series(df)
+    delta_vol = delta_vol[:n]
+    delta_cols = delta_cols[:n] if len(delta_cols) >= n else None
+    vol_bar_cols = get_bar_colors_for_volume(df)
+    vol_bar_cols = vol_bar_cols[:n] if vol_bar_cols is not None and len(vol_bar_cols) >= n else None
+    
+    # Subplot 3 Baris: 1. Harga & VWAP, 2. Volume & ATR, 3. Delta Volume Harian
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.07,
+        row_heights=[0.48, 0.26, 0.26],
+        specs=[
+            [{"secondary_y": False}],
+            [{"secondary_y": True}],
+            [{"secondary_y": False}]
+        ],
+        subplot_titles=[
+            f"1. Tren Harga {asset_type} & VWAP",
+            "2. Volume Transaksi (Bar) & ATR Volatilitas (Garis Kuning)",
+            "3. Delta Volume Harian (Net Buy vs Net Sell)"
+        ]
+    )
+    
+    # Row 1: Close Price & VWAP
+    is_price_up = (close_arr[-1] >= close_arr[0]) if len(close_arr) >= 2 else True
+    c_color = '#00C853' if is_price_up else '#D50000'
+    
+    fig.add_trace(go.Scatter(
+        x=dates, y=close_arr, mode='lines', name=f'Harga {asset_type}',
+        line=dict(color=c_color, width=2.2),
+        hoverinfo='text',
+        hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Close:</b> {smart_format(c, prefix=curr_prefix)}" for d, c in zip(dates, close_arr)]
+    ), row=1, col=1)
+    
+    if len(vwap_arr) == n:
+        fig.add_trace(go.Scatter(
+            x=dates, y=vwap_arr, mode='lines', name='VWAP',
+            line=dict(color='#00B0FF', width=1.8, dash='dash'),
+            hoverinfo='text',
+            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>VWAP:</b> {smart_format(v, prefix=curr_prefix)}" for d, v in zip(dates, vwap_arr)]
+        ), row=1, col=1)
+        
+    # High/Low on Row 1
+    max_idx = int(np.argmax(close_arr))
+    min_idx = int(np.argmin(close_arr))
+    if max_idx != min_idx:
+        fig.add_trace(go.Scatter(
+            x=[dates[max_idx]], y=[close_arr[max_idx]], mode='markers+text', name='Tertinggi (High)',
+            marker=dict(color='#00C853', size=9, symbol='triangle-up'),
+            text=[f"▲ High: {smart_format(close_arr[max_idx], prefix=curr_prefix)}"],
+            textposition="top center", textfont=dict(color='#00C853', size=11),
+            hoverinfo='skip'
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[dates[min_idx]], y=[close_arr[min_idx]], mode='markers+text', name='Terendah (Low)',
+            marker=dict(color='#D50000', size=9, symbol='triangle-down'),
+            text=[f"▼ Low: {smart_format(close_arr[min_idx], prefix=curr_prefix)}"],
+            textposition="bottom center", textfont=dict(color='#D50000', size=11),
+            hoverinfo='skip'
+        ), row=1, col=1)
+        
+    # Row 2: Volume (Bar) and ATR (Line on secondary y-axis)
+    if len(vol_arr) > 0 and not np.all(vol_arr == 0):
+        fig.add_trace(go.Bar(
+            x=dates, y=vol_arr, name='Volume',
+            marker_color=vol_bar_cols if vol_bar_cols else '#00C853',
+            opacity=0.75,
+            hoverinfo='text',
+            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Volume:</b> {v:,.0f}" for d, v in zip(dates, vol_arr)]
+        ), row=2, col=1, secondary_y=False)
+        
+    if len(atr_arr) == n:
+        fig.add_trace(go.Scatter(
+            x=dates, y=atr_arr, mode='lines', name='ATR (Volatilitas)',
+            line=dict(color='#FFB300', width=2.0),
+            hoverinfo='text',
+            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>ATR:</b> {smart_format(a, prefix=curr_prefix)}" for d, a in zip(dates, atr_arr)]
+        ), row=2, col=1, secondary_y=True)
+        
+    # Row 3: Delta Volume (Bar)
+    if len(delta_vol) > 0:
+        fig.add_trace(go.Bar(
+            x=dates, y=delta_vol, name='Delta Volume',
+            marker_color=delta_cols if delta_cols else '#00C853',
+            opacity=0.85,
+            hoverinfo='text',
+            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Delta:</b> {('+' if dv >= 0 else '')}{dv:,.0f}" for d, dv in zip(dates, delta_vol)]
+        ), row=3, col=1)
+        
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=15, color='#222'), y=0.98, x=0.5, xanchor='center', yanchor='top'),
+        hovermode='x unified',
+        margin=dict(l=40, r=40, t=80, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        template='plotly_white',
+        height=720,
+        showlegend=True
+    )
+    fig.update_yaxes(title_text=f"Harga {asset_type}", row=1, col=1)
+    fig.update_yaxes(title_text="Volume", row=2, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="ATR", row=2, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="Net Delta", row=3, col=1)
+    fig.update_xaxes(title_text="Tanggal", row=3, col=1)
     return fig
 
 def get_metric_badge_info(category):
@@ -1177,9 +1342,23 @@ def main(stock):
         st.write("Hingga")
         st.write(format_df_for_display(full_data.tail(1)))
 
+        if not full_data.empty and len(full_data) >= 2:
+            c_start_f = safe_float(full_data['Close'].iloc[0])
+            c_end_f = safe_float(full_data['Close'].iloc[-1])
+            tot_chg_f = ((c_end_f - c_start_f) / c_start_f) * 100.0 if c_start_f > 0 else 0.0
+            tot_sign_f = f":green[▲ +{tot_chg_f:,.2f}%]" if tot_chg_f >= 0 else f":red[▼ {tot_chg_f:,.2f}%]"
+            tot_diff_f = c_end_f - c_start_f
+            diff_sign_f = "+" if tot_diff_f >= 0 else ""
+            tot_diff_str_f = smart_format(tot_diff_f, prefix=curr_prefix)
+            st.markdown(f"**Performa Perubahan Keseluruhan Data:** {tot_sign_f} (`{diff_sign_f}{tot_diff_str_f}`)")
+
         # Plot Interaktif dengan Plotly untuk data keseluruhan
         fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', '#31333F', curr_prefix=curr_prefix)
         st.plotly_chart(fig1, use_container_width=True)
+
+        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
+            fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+            st.plotly_chart(fig_full_comp, use_container_width=True)
 
         with st.popover("Tampilkan Semua Data"):
             st.write(format_df_for_display(full_data))
@@ -1373,9 +1552,23 @@ def main(stock):
         st.write("Hingga")
         st.write(format_df_for_display(data.tail(1)))
 
+        if not data.empty and len(data) >= 2:
+            c_start_tr = safe_float(data['Close'].iloc[0])
+            c_end_tr = safe_float(data['Close'].iloc[-1])
+            tr_chg = ((c_end_tr - c_start_tr) / c_start_tr) * 100.0 if c_start_tr > 0 else 0.0
+            tr_sign = f":green[▲ +{tr_chg:,.2f}%]" if tr_chg >= 0 else f":red[▼ {tr_chg:,.2f}%]"
+            tr_diff = c_end_tr - c_start_tr
+            diff_tr_sign = "+" if tr_diff >= 0 else ""
+            tr_diff_str = smart_format(tr_diff, prefix=curr_prefix)
+            st.markdown(f"**Performa Perubahan Periode Pelatihan ({duration_str}):** {tr_sign} (`{diff_tr_sign}{tr_diff_str}`)")
+
         # Plot Interaktif dengan Plotly untuk data pelatihan
         fig2 = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#d6c36b', curr_prefix=curr_prefix)
         st.plotly_chart(fig2, use_container_width=True)
+
+        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Periode Pelatihan)", expanded=False):
+            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif (Periode Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+            st.plotly_chart(fig_train_comp, use_container_width=True)
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
             st.write(format_df_for_display(data))
@@ -1752,6 +1945,11 @@ def main(stock):
                 fig_eval = plot_interactive_evaluation(actual_dates, y_test, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
                 st.plotly_chart(fig_eval, use_container_width=True)
 
+                with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Uji / Evaluasi)", expanded=False):
+                    eval_sub_df = data.loc[actual_dates] if (len(actual_dates) > 0 and all(d in data.index for d in actual_dates)) else data.tail(len(y_test))
+                    fig_eval_comp = plot_comprehensive_market_indicators(eval_sub_df, f'Indikator Pasar Komprehensif (Periode Uji {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                    st.plotly_chart(fig_eval_comp, use_container_width=True)
+
                 with st.popover("Menampilkan Grafik Loss dan Val Loss"):
                         # Display final metrics
                         final_loss = history.history['loss'][-1]
@@ -1829,6 +2027,11 @@ def main(stock):
                         curr_prefix=curr_prefix
                     )
                     st.plotly_chart(fig_fc, use_container_width=True)
+
+                    with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
+                        fc_slice_df = data.iloc[start_idx:]
+                        fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                        st.plotly_chart(fig_fc_comp, use_container_width=True)
 
                     # Data Line untuk grafik & kalkulasi
                     last_actual_price = safe_float(data['Close'].iloc[-1])
