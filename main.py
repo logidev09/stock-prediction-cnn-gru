@@ -275,14 +275,14 @@ def calculate_atr_series(df_slice, period=14):
     except Exception:
         return np.array([], dtype=float)
 
-def calculate_delta_volume_series(df_slice):
+def calculate_daily_delta_volume_series(df_slice):
     if df_slice is None or df_slice.empty:
-        return np.array([], dtype=float)
+        return np.array([], dtype=float), []
     try:
         close_arr = extract_1d_array(df_slice['Close'] if 'Close' in df_slice.columns else df_slice.iloc[:, 0])
         n = len(close_arr)
         if n == 0:
-            return np.array([], dtype=float)
+            return np.array([], dtype=float), []
         open_arr = extract_1d_array(df_slice['Open']) if 'Open' in df_slice.columns else None
         vol_arr = extract_1d_array(df_slice['Volume']) if 'Volume' in df_slice.columns else np.ones(n)
         
@@ -291,6 +291,7 @@ def calculate_delta_volume_series(df_slice):
         v = vol_arr[:min_len]
         
         delta_vol = np.zeros(min_len)
+        bar_colors = []
         for i in range(min_len):
             if open_arr is not None and i < len(open_arr) and not np.isnan(open_arr[i]):
                 is_up = c[i] >= open_arr[i]
@@ -299,11 +300,15 @@ def calculate_delta_volume_series(df_slice):
             else:
                 is_up = True
             delta_vol[i] = v[i] if is_up else -v[i]
+            bar_colors.append('#00C853' if is_up else '#D50000')
             
-        cum_delta = np.cumsum(delta_vol)
-        return cum_delta
+        return delta_vol, bar_colors
     except Exception:
-        return np.array([], dtype=float)
+        return np.array([], dtype=float), []
+
+def calculate_delta_volume_series(df_slice):
+    delta_vol, _ = calculate_daily_delta_volume_series(df_slice)
+    return np.cumsum(delta_vol) if len(delta_vol) > 0 else np.array([], dtype=float)
 
 def get_bar_colors_for_volume(df_slice):
     if df_slice is None or df_slice.empty:
@@ -328,6 +333,50 @@ def get_bar_colors_for_volume(df_slice):
         return colors
     except Exception:
         return None
+
+def render_combined_volume_atr_sparkline(vol_series, atr_series, bar_colors=None, height=1.3):
+    fig, ax1 = plt.subplots(figsize=(2.5, height), dpi=100)
+    fig.patch.set_facecolor('none')
+    ax1.set_facecolor('none')
+    
+    y_vol = extract_1d_array(vol_series)
+    y_atr = extract_1d_array(atr_series)
+    
+    if len(y_vol) == 0:
+        ax1.text(0.5, 0.5, '-', ha='center', va='center', fontsize=9, color='#888')
+    elif len(y_vol) == 1:
+        c = bar_colors[0] if (bar_colors is not None and len(bar_colors) > 0) else '#00C853'
+        ax1.bar([0], [y_vol[0]], color=c, alpha=0.85, width=0.6)
+        if len(y_atr) > 0:
+            ax2 = ax1.twinx()
+            ax2.set_facecolor('none')
+            ax2.scatter([0], [y_atr[0]], color='#FFB300', s=20)
+            for spine in ax2.spines.values():
+                spine.set_visible(False)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+    else:
+        x = np.arange(len(y_vol), dtype=float)
+        if bar_colors is not None and len(bar_colors) == len(y_vol):
+            ax1.bar(x, y_vol, color=bar_colors, alpha=0.75, width=0.8)
+        else:
+            ax1.bar(x, y_vol, color='#00C853', alpha=0.75, width=0.8)
+            
+        if len(y_atr) == len(y_vol) and len(y_atr) > 1:
+            ax2 = ax1.twinx()
+            ax2.set_facecolor('none')
+            ax2.plot(x, y_atr, color='#FFB300', linewidth=2.0)
+            for spine in ax2.spines.values():
+                spine.set_visible(False)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    plt.tight_layout(pad=0.1)
+    return fig
 
 def render_combined_price_vwap_sparkline(close_series, vwap_series, is_positive=True, height=1.3):
     fig, ax = plt.subplots(figsize=(2.5, height), dpi=100)
@@ -605,6 +654,38 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Harga Aktual:</b> {smart_format(p, prefix=curr_prefix)}" for d, p in zip(h_dates, h_prices)]
     ))
 
+    # High dan Low HANYA di Harga Aktual
+    if len(h_prices) > 0:
+        max_h_idx = int(np.argmax(h_prices))
+        min_h_idx = int(np.argmin(h_prices))
+
+        if max_h_idx != min_h_idx:
+            fig.add_trace(go.Scatter(
+                x=[h_dates[max_h_idx]],
+                y=[h_prices[max_h_idx]],
+                mode='markers+text',
+                name='Aktual Tertinggi (High)',
+                marker=dict(color='#00C853', size=10, symbol='triangle-up'),
+                text=[f"▲ High: {smart_format(h_prices[max_h_idx], prefix=curr_prefix)}"],
+                textposition="top center",
+                textfont=dict(color='#00C853', size=11),
+                hoverinfo='text',
+                hovertext=[f"<b>Aktual Tertinggi (High)</b><br>Tanggal: {h_dates[max_h_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(h_prices[max_h_idx], prefix=curr_prefix)}"]
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=[h_dates[min_h_idx]],
+                y=[h_prices[min_h_idx]],
+                mode='markers+text',
+                name='Aktual Terendah (Low)',
+                marker=dict(color='#D50000', size=10, symbol='triangle-down'),
+                text=[f"▼ Low: {smart_format(h_prices[min_h_idx], prefix=curr_prefix)}"],
+                textposition="bottom center",
+                textfont=dict(color='#D50000', size=11),
+                hoverinfo='text',
+                hovertext=[f"<b>Aktual Terendah (Low)</b><br>Tanggal: {h_dates[min_h_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(h_prices[min_h_idx], prefix=curr_prefix)}"]
+            ))
+
     # Trace 2: Harga Pengujian
     last_test_date = None
     last_test_price = None
@@ -630,19 +711,19 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     n_f = min(len(f_dates), len(f_prices))
 
     if n_f > 0:
-        # Garis Titik-titik (Dotted) Penghubung dari Uji Terakhir ke Titik Prediksi Pertama
+        # 1. Garis Titik-titik (Dotted) Transisi dari Uji Terakhir ke Titik Prediksi Pertama
         if last_test_date is not None and last_test_price is not None:
             fig.add_trace(go.Scatter(
                 x=[last_test_date, f_dates[0]],
                 y=[last_test_price, f_prices[0]],
                 mode='lines',
-                name='Transisi Estimasi',
+                name='Transisi Uji-Prediksi',
                 line=dict(color='#107EDE', width=2.0, dash='dot'),
                 showlegend=False,
                 hoverinfo='skip'
             ))
 
-        # Trace 3: Harga Prediksi Model
+        # Trace 3: Harga Prediksi Model (Garis Solid + Marker)
         hover_pred_fc = []
         for d, p in zip(f_dates[:n_f], f_prices[:n_f]):
             if last_test_price is not None and last_test_price > 0:
@@ -658,13 +739,13 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             y=f_prices[:n_f],
             mode='lines+markers',
             name='Harga Prediksi Model',
-            line=dict(color='#107EDE', width=2.5),
+            line=dict(color='#107EDE', width=2.5, dash='solid'),
             marker=dict(size=7, color='#107EDE'),
             hoverinfo='text',
             hovertext=hover_pred_fc
         ))
 
-        # Trace 4: Garis Duplikat Proyeksi Tren Aktual (Berdasarkan Persentase Return Prediksi)
+        # Trace 4: Proyeksi Tren Aktual (Disesuaikan terhadap Harga Aktual)
         if len(h_prices) > 0:
             last_act_dt = h_dates[-1]
             last_act_pr = h_prices[-1]
@@ -682,11 +763,19 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             proj_color = '#00C853' if is_proj_up else '#D50000'
             proj_label = f"Proyeksi Tren Aktual ({'▲ Naik' if is_proj_up else '▼ Turun'})"
 
-            # Connect smoothly from last actual date
-            proj_x = [last_act_dt] + list(f_dates[:n_f])
-            proj_y = [last_act_pr] + list(proj_prices)
+            # Garis Titik-titik (Dotted) Transisi dari Aktual Terakhir ke Titik Proyeksi Pertama
+            fig.add_trace(go.Scatter(
+                x=[last_act_dt, f_dates[0]],
+                y=[last_act_pr, proj_prices[0]],
+                mode='lines',
+                name='Transisi Aktual-Proyeksi',
+                line=dict(color=proj_color, width=2.0, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
 
-            hover_proj = [f"<b>Tanggal:</b> {last_act_dt.strftime('%Y-%m-%d')}<br><b>Titik Awal Aktual:</b> {smart_format(last_act_pr, prefix=curr_prefix)}"]
+            # Garis Solid Proyeksi Tren Aktual
+            hover_proj = []
             for d, pr in zip(f_dates[:n_f], proj_prices):
                 pct_from_act = ((pr - last_act_pr) / last_act_pr) * 100.0 if last_act_pr > 0 else 0.0
                 sign = "+" if pct_from_act >= 0 else ""
@@ -697,83 +786,36 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
                 )
 
             fig.add_trace(go.Scatter(
-                x=proj_x,
-                y=proj_y,
+                x=f_dates[:n_f],
+                y=proj_prices,
                 mode='lines+markers',
                 name=proj_label,
-                line=dict(color=proj_color, width=2.6, dash='dash'),
+                line=dict(color=proj_color, width=2.5, dash='solid'),
                 marker=dict(size=7, color=proj_color),
                 hoverinfo='text',
                 hovertext=hover_proj
             ))
 
-        # Markers High / Low yang Rapi dan Tidak Bertumpukan
-        if n_f == 1:
-            # 1 Hari Forecast: Hanya tampilkan target tunggal
-            fig.add_trace(go.Scatter(
-                x=[f_dates[0]],
-                y=[f_prices[0]],
-                mode='markers+text',
-                name='Target Prediksi Model',
-                marker=dict(color='#107EDE', size=11, symbol='circle'),
-                text=[f"🎯 Model: {smart_format(f_prices[0], prefix=curr_prefix)}"],
-                textposition="top center",
-                textfont=dict(color='#107EDE', size=12),
-                hoverinfo='skip'
-            ))
-        else:
-            max_f_idx = int(np.argmax(f_prices[:n_f]))
-            min_f_idx = int(np.argmin(f_prices[:n_f]))
-
-            if max_f_idx != min_f_idx:
-                fig.add_trace(go.Scatter(
-                    x=[f_dates[max_f_idx]],
-                    y=[f_prices[max_f_idx]],
-                    mode='markers+text',
-                    name='Prediksi Tertinggi',
-                    marker=dict(color='#00C853', size=11, symbol='triangle-up'),
-                    text=[f"▲ High: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"],
-                    textposition="top center",
-                    textfont=dict(color='#00C853', size=12),
-                    hoverinfo='text',
-                    hovertext=[f"<b>Prediksi Tertinggi</b><br>Tanggal: {f_dates[max_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[max_f_idx], prefix=curr_prefix)}"]
-                ))
-
-                fig.add_trace(go.Scatter(
-                    x=[f_dates[min_f_idx]],
-                    y=[f_prices[min_f_idx]],
-                    mode='markers+text',
-                    name='Prediksi Terendah',
-                    marker=dict(color='#D50000', size=11, symbol='triangle-down'),
-                    text=[f"▼ Low: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"],
-                    textposition="bottom center",
-                    textfont=dict(color='#D50000', size=12),
-                    hoverinfo='text',
-                    hovertext=[f"<b>Prediksi Terendah</b><br>Tanggal: {f_dates[min_f_idx].strftime('%Y-%m-%d')}<br>Harga: {smart_format(f_prices[min_f_idx], prefix=curr_prefix)}"]
-                ))
-            else:
-                fig.add_trace(go.Scatter(
-                    x=[f_dates[0]],
-                    y=[f_prices[0]],
-                    mode='markers+text',
-                    name='Target Prediksi Model',
-                    marker=dict(color='#107EDE', size=11, symbol='circle'),
-                    text=[f"🎯 Target: {smart_format(f_prices[0], prefix=curr_prefix)}"],
-                    textposition="top center",
-                    textfont=dict(color='#107EDE', size=12),
-                    hoverinfo='skip'
-                ))
-
     fig.update_layout(
         title=dict(
             text='Prediksi Pergerakan Harga ke Depan & Proyeksi Tren',
-            font=dict(size=16, color='#222')
+            font=dict(size=16, color='#222'),
+            y=0.98,
+            x=0.5,
+            xanchor='center',
+            yanchor='top'
         ),
         xaxis=dict(title="Tanggal", showgrid=True, gridcolor='#F0F0F0'),
         yaxis=dict(title=y_label, showgrid=True, gridcolor='#F0F0F0'),
         hovermode='x unified',
-        margin=dict(l=40, r=40, t=80, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="center", x=0.5),
+        margin=dict(l=40, r=40, t=110, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="center",
+            x=0.5
+        ),
         template='plotly_white',
         height=480
     )
@@ -1230,8 +1272,8 @@ def main(stock):
         st.subheader("Data Pelatihan yang telah dipilih")
         st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
 
-        # Toggle Grafik Mini Tren Riwayat Harga, VWAP & Volume (1D, 1W, 1M, 90D, YTD)
-        with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, Delta & ATR (1D, 1W, 1M, 90D, YTD)", expanded=False):
+        # Toggle Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta (1D, 1W, 1M, 90D, YTD)
+        with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)", expanded=False):
             if not data.empty:
                 slice_1d = get_period_slice(data, 1)
                 slice_1w = get_period_slice(data, 7)
@@ -1261,8 +1303,11 @@ def main(stock):
                         c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
                         mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
                         mean_c_str = smart_format(mean_c, prefix=curr_prefix)
-                        badge_sign = ("▲ +" if (chg is not None and chg >= 0) else "▼ ") + f"{chg:.2f}%" if chg is not None else "-"
-                        st.caption(f"{label} ({badge_sign} | Rata2: {mean_c_str})")
+                        if chg is not None:
+                            badge_sign = f":green[▲ +{chg:.2f}%]" if chg >= 0 else f":red[▼ {chg:.2f}%]"
+                        else:
+                            badge_sign = "-"
+                        st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
                         if not s_df.empty and 'Close' in s_df.columns:
                             is_pos = (chg >= 0) if chg is not None else True
                             vwap_s = calculate_vwap_series(s_df)
@@ -1272,73 +1317,50 @@ def main(stock):
                         else:
                             st.write("-")
                             
-                # 2. Baris Chart Volume Transaksi (dengan Persentase Perubahan & Rata-rata)
-                st.markdown(f"**2. Grafik Mini Volume Transaksi (Bar Hijau Kenaikan & Merah Penurunan):**")
-                cols_vol = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_vol, period_slices):
+                # 2. Baris Chart Volume Transaksi Disatukan dengan Garis ATR (Kuning)
+                st.markdown(f"**2. Grafik Mini Volume Transaksi & ATR (Bar Hijau/Merah: Volume, Garis Kuning: ATR Volatilitas):**")
+                cols_vol_atr = st.columns(5)
+                for col, (label, s_df, chg) in zip(cols_vol_atr, period_slices):
                     with col:
                         vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
                         if len(vol_arr) >= 2 and vol_arr[0] > 0:
                             v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
-                            v_sign = ("▲ +" if v_chg >= 0 else "▼ ") + f"{v_chg:.2f}%"
+                            v_badge = f":green[▲ +{v_chg:.1f}%]" if v_chg >= 0 else f":red[▼ {v_chg:.1f}%]"
                         else:
-                            v_sign = "-"
-                        mean_v = np.mean(vol_arr) if len(vol_arr) > 0 else 0.0
-                        mean_v_str = format_market_cap(mean_v)
-                        st.caption(f"Volume {label} ({v_sign} | Rata2: {mean_v_str})")
-                        if not s_df.empty and 'Volume' in s_df.columns:
-                            bar_cols = get_bar_colors_for_volume(s_df)
-                            is_pos = (chg >= 0) if chg is not None else True
-                            fig = render_sparkline_chart(s_df['Volume'], is_positive=is_pos, chart_type='bar', bar_colors=bar_cols)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
-                            st.write("-")
-
-                # 3. Baris Chart Delta Volume (Akumulasi Net Beli / Jual)
-                st.markdown(f"**3. Grafik Mini Delta Volume (Akumulasi Net Buy vs Sell Volume):**")
-                cols_delta = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_delta, period_slices):
-                    with col:
-                        delta_arr = calculate_delta_volume_series(s_df)
-                        if len(delta_arr) > 0:
-                            net_delta = delta_arr[-1]
-                            d_pos = net_delta >= 0
-                            d_sign = ("▲ +" if d_pos else "▼ -") + format_market_cap(abs(net_delta))
-                            tag = "Net Buy" if d_pos else "Net Sell"
-                        else:
-                            d_pos = True
-                            d_sign = "-"
-                            tag = "N/A"
-                        st.caption(f"Delta {label} ({d_sign} {tag})")
-                        if len(delta_arr) > 0:
-                            d_color = '#00C853' if d_pos else '#D50000'
-                            fig = render_sparkline_chart(delta_arr, is_positive=d_pos, chart_type='line', line_color=d_color)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
-                            st.write("-")
-
-                # 4. Baris Chart ATR (Average True Range - Volatilitas Pasar)
-                st.markdown(f"**4. Grafik Mini ATR (Average True Range - Indikator Volatilitas Pasar):**")
-                cols_atr = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_atr, period_slices):
-                    with col:
+                            v_badge = "-"
+                        
                         atr_arr = calculate_atr_series(s_df)
                         if len(atr_arr) > 0:
                             latest_atr = atr_arr[-1]
                             latest_atr_str = smart_format(latest_atr, prefix=curr_prefix)
-                            if len(atr_arr) >= 2 and atr_arr[0] > 0:
-                                atr_chg = ((atr_arr[-1] - atr_arr[0]) / atr_arr[0]) * 100.0
-                                atr_sign = ("▲ +" if atr_chg >= 0 else "▼ ") + f"{atr_chg:.2f}%"
-                            else:
-                                atr_sign = "-"
                         else:
                             latest_atr_str = "-"
-                            atr_sign = "-"
-                        st.caption(f"ATR {label} ({latest_atr_str} | {atr_sign})")
-                        if len(atr_arr) > 0:
-                            fig = render_sparkline_chart(atr_arr, is_positive=True, chart_type='line', line_color='#FFA000')
+                        
+                        st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
+                        if not s_df.empty and 'Volume' in s_df.columns:
+                            bar_cols = get_bar_colors_for_volume(s_df)
+                            fig = render_combined_volume_atr_sparkline(s_df['Volume'], atr_arr, bar_colors=bar_cols)
+                            st.pyplot(fig)
+                            plt.close(fig)
+                        else:
+                            st.write("-")
+
+                # 3. Baris Chart Delta Volume Harian (Bar Hijau Net Buy & Merah Net Sell)
+                st.markdown(f"**3. Grafik Mini Delta Volume Harian (Bar Hijau: Net Buy, Bar Merah: Net Sell):**")
+                cols_delta = st.columns(5)
+                for col, (label, s_df, chg) in zip(cols_delta, period_slices):
+                    with col:
+                        daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
+                        if len(daily_delta) > 0:
+                            net_delta = np.sum(daily_delta)
+                            d_pos = net_delta >= 0
+                            d_badge = f":green[▲ +{format_market_cap(net_delta)} Net Buy]" if d_pos else f":red[▼ -{format_market_cap(abs(net_delta))} Net Sell]"
+                        else:
+                            d_pos = True
+                            d_badge = "-"
+                        st.markdown(f"<small><b>Delta {label}</b><br>{d_badge}</small>", unsafe_allow_html=True)
+                        if len(daily_delta) > 0:
+                            fig = render_sparkline_chart(daily_delta, is_positive=d_pos, chart_type='bar', bar_colors=daily_delta_cols)
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
@@ -1808,10 +1830,15 @@ def main(stock):
                     )
                     st.plotly_chart(fig_fc, use_container_width=True)
 
-                    # Data Line untuk grafik
-                    last_actual_price = safe_float(data['Close'].iloc[-1])  # Extract scalar value safely
-                    last_forecast_price = safe_float(forecast[-1][0])  # Extract scalar value safely
-                    percent_change = ((last_forecast_price - last_actual_price) / last_actual_price) * 100
+                    # Data Line untuk grafik & kalkulasi
+                    last_actual_price = safe_float(data['Close'].iloc[-1])
+                    last_test_price = safe_float(y_pred[-1]) if (len(y_pred) > 0) else last_actual_price
+                    last_forecast_price = safe_float(forecast[-1][0])
+                    
+                    pct_model_change = ((last_forecast_price - last_test_price) / last_test_price) * 100.0 if last_test_price > 0 else 0.0
+                    last_proj_price = last_actual_price * (1.0 + (pct_model_change / 100.0))
+                    pct_proj_change = ((last_proj_price - last_actual_price) / last_actual_price) * 100.0 if last_actual_price > 0 else 0.0
+                    percent_change = pct_proj_change
 
                     if len(y_test) >= forecast_days:
 
@@ -1844,13 +1871,29 @@ def main(stock):
                         with st.popover("Tampilkan Tabel Prediksi"):
                             st.dataframe(table_df, use_container_width=True)
 
-                        st.subheader("Ringkasan Prediksi")
+                        st.subheader("Ringkasan Prediksi & Proyeksi Tren")
 
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
-                        with col2:
-                            st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
+                        st.markdown("**1. Proyeksi Pasar Riil (Disesuaikan terhadap Harga Aktual):**")
+                        r_col1, r_col2 = st.columns(2)
+                        with r_col1:
+                            st.metric("Harga Terakhir Aktual", smart_format(last_actual_price, prefix=curr_prefix))
+                        with r_col2:
+                            st.metric(
+                                "Proyeksi Tren Aktual",
+                                smart_format(last_proj_price, prefix=curr_prefix),
+                                f"{pct_proj_change:+.2f}%"
+                            )
+
+                        st.markdown("**2. Estimasi Output Model Neural Network (Basis Data Uji):**")
+                        r_col3, r_col4 = st.columns(2)
+                        with r_col3:
+                            st.metric("Harga Terakhir Pengujian (Uji)", smart_format(last_test_price, prefix=curr_prefix))
+                        with r_col4:
+                            st.metric(
+                                "Prediksi Harga Model",
+                                smart_format(last_forecast_price, prefix=curr_prefix),
+                                f"{pct_model_change:+.2f}%"
+                            )
 
                         comp_sub = perf_eval_sub.get('composite_score', 0)
                         sub_lbl = perf_eval_sub.get('label', 'Performa')
@@ -1884,12 +1927,21 @@ def main(stock):
 
             if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
 
-                st.subheader(f"Ringkasan Prediksi **{forecast_period}** ke depan")
+                st.subheader(f"Ringkasan Prediksi & Proyeksi **{forecast_period}** ke depan")
+                
+                st.markdown("**Proyeksi Pasar Riil:**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("Harga Terakhir", smart_format(last_actual_price, prefix=curr_prefix))
+                    st.metric("Harga Terakhir Aktual", smart_format(last_actual_price, prefix=curr_prefix))
                 with col2:
-                    st.metric("Prediksi Harga", smart_format(last_forecast_price, prefix=curr_prefix), f"{percent_change:.2f}%")
+                    st.metric("Proyeksi Tren Aktual", smart_format(last_proj_price, prefix=curr_prefix), f"{pct_proj_change:+.2f}%")
+
+                st.markdown("**Estimasi Output Model:**")
+                col3, col4 = st.columns(2)
+                with col3:
+                    st.metric("Harga Terakhir Pengujian (Uji)", smart_format(last_test_price, prefix=curr_prefix))
+                with col4:
+                    st.metric("Prediksi Harga Model", smart_format(last_forecast_price, prefix=curr_prefix), f"{pct_model_change:+.2f}%")
 
                 def interpret_forecast(percent_change):
                     if percent_change < -20:
