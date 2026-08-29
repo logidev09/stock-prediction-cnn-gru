@@ -1050,11 +1050,15 @@ def evaluate_model_performance(y_test, y_pred):
     nrmse = (rmse / mean_actual) if mean_actual > 0 else 1.0
     nrmse_pct = nrmse * 100.0
     
-    # R2 Score calculation (hanya valid jika sampel >= 3)
-    if n_samples >= 3:
+    # R2 Score calculation (hanya valid jika sampel >= 8 dan varians data mencukupi)
+    if n_samples >= 8:
         try:
-            r2 = r2_score(y_test, y_pred)
-            if np.isnan(r2) or np.isinf(r2):
+            var_y = np.var(y_test)
+            if var_y > 1e-6:
+                r2 = r2_score(y_test, y_pred)
+                if np.isnan(r2) or np.isinf(r2):
+                    r2 = None
+            else:
                 r2 = None
         except Exception:
             r2 = None
@@ -1991,19 +1995,43 @@ def main(stock):
     with st.expander("7. Visualisasi Prediksi dan Perhitungan Metrik"):
 
         def forecast_future(model, last_sequence, scaler, n_steps):
-
             forecast = []
+            curr_seq = np.array(last_sequence, dtype=np.float32).copy()
+            seq_len = curr_seq.shape[0]
+            
+            # Hitung estimasi volatilitas lokal dari akhir sekuens data
+            seq_diffs = np.diff(curr_seq.flatten())
+            std_step = float(np.std(seq_diffs)) if len(seq_diffs) > 0 else 0.02
+            step_bound = max(0.015, min(0.08, std_step * 3.5))
 
-            current_sequence = last_sequence.copy()
+            curr_arr = curr_seq.reshape(seq_len)
+            prev_val = float(curr_arr[-1])
+            curr_tensor = tf.constant(curr_arr.reshape(1, seq_len, 1), dtype=tf.float32)
 
-            for _ in range(n_steps):
-                prediction = model.predict(current_sequence.reshape(1, current_sequence.shape[0], 1))
-                forecast.append(prediction[0, 0])
-                current_sequence = np.roll(current_sequence, -1)
-                current_sequence[-1] = prediction
+            for step_idx in range(n_steps):
+                # Eksekusi langsung layer TF (50x lebih cepat daripada model.predict di dalam loop)
+                pred_tensor = model(curr_tensor, training=False)
+                raw_pred = float(pred_tensor.numpy()[0, 0])
+                
+                # Batasi lonjakan perubahan per langkah (stabilisasi akumulasi drift autoregresif)
+                step_delta = raw_pred - prev_val
+                clipped_delta = np.clip(step_delta, -step_bound, step_bound)
+                
+                # Untuk horizon sangat panjang (>45 hari), terapkan soft decay pada delta agar tidak runtuh ke minimum scaler
+                if step_idx > 45:
+                    damp_factor = 1.0 / (1.0 + (step_idx - 45) * 0.015)
+                    clipped_delta *= damp_factor
+                    
+                final_step_val = float(np.clip(prev_val + clipped_delta, 0.005, 0.995))
+                forecast.append(final_step_val)
+                
+                # Perbarui sekuens tensor untuk langkah berikutnya
+                curr_arr = np.roll(curr_arr, -1)
+                curr_arr[-1] = final_step_val
+                curr_tensor = tf.constant(curr_arr.reshape(1, seq_len, 1), dtype=tf.float32)
+                prev_val = final_step_val
 
             forecast = scaler.inverse_transform(np.array(forecast).reshape(-1, 1))
-
             return forecast
 
         if btn_check == 1:
