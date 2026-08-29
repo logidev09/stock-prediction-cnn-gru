@@ -1,0 +1,13 @@
+# Local / Kaggle deployment copy (excluded from github/streamlit cloud)
+app.py
+
+# Python & Environment caches
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+venv/
+.env
+
+# Streamlit temporary config
+.streamlit/secrets.toml
