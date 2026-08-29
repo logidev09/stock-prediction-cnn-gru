@@ -1363,6 +1363,17 @@ def main(stock):
         # DATA HISTORY
         full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
 
+        if full_data.empty or len(full_data) == 0:
+            st.error(f"❌ Simbol ticker **'{stock}'** tidak ditemukan atau data historis tidak tersedia.", icon=":material/error:")
+            st.info("""
+            💡 **Panduan Format Input Ticker yang Benar:**
+            - **Aset Kripto**: Tambahkan `-USD` di akhir simbol (contoh: `BTC-USD`, `ETH-USD`, `DOGE-USD`, `DEXE-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`).
+            - **Saham Indonesia (BEI / IDX)**: Tambahkan `.JK` di akhir kode emiten (contoh: `BBCA.JK`, `BBRI.JK`, `TLKM.JK`, `ASII.JK`, `GOTO.JK`).
+            - **Saham Global (Wall Street / US)**: Masukkan kode ticker langsung (contoh: `AAPL`, `NVDA`, `TSLA`, `MSFT`, `AMZN`, `GOOGL`).
+            - **Komoditas / Indeks / Forex**: Contoh: `GC=F` (Emas), `CL=F` (Minyak Mentah), `IDR=X` (USD/IDR), `^JKSE` (IHSG).
+            """, icon=":material/lightbulb:")
+            st.stop()
+
         st.subheader("Data keseluruhan")
         st.write("Mulai")
         st.write(format_df_for_display(full_data.head(1)))
@@ -1381,11 +1392,11 @@ def main(stock):
 
         # Plot Interaktif dengan Plotly untuk data keseluruhan
         fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', '#31333F', curr_prefix=curr_prefix)
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True, key="fig_full_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
             fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-            st.plotly_chart(fig_full_comp, use_container_width=True)
+            st.plotly_chart(fig_full_comp, use_container_width=True, key="fig_full_data_comp_indicators")
 
         with st.popover("Tampilkan Semua Data"):
             st.write(format_df_for_display(full_data))
@@ -1591,11 +1602,11 @@ def main(stock):
 
         # Plot Interaktif dengan Plotly untuk data pelatihan
         fig2 = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#d6c36b', curr_prefix=curr_prefix)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True, key="fig_train_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Periode Pelatihan)", expanded=False):
             fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif (Periode Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-            st.plotly_chart(fig_train_comp, use_container_width=True)
+            st.plotly_chart(fig_train_comp, use_container_width=True, key="fig_train_data_comp_indicators")
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
             st.write(format_df_for_display(data))
@@ -1694,7 +1705,7 @@ def main(stock):
                 st.info('Rekomendasi Default: **0.2 (20%)** (Rentang Akurat: **0.1–0.3**).', icon=":material/recommend:")
                 st.warning('Ket: Dropout 0.2 mencegah ko-adaptasi neuron yang menyebabkan overfitting tanpa membuang representasi penting.', icon=":material/security:")
 
-            def create_model(seq_len, c_filters, k_size, c_act, g_u1, g_u2, d_rate):
+            def create_model(seq_len, c_filters, k_size, c_act, g_u1, g_u2, d_rate, lr=0.001):
                 model = Sequential([
                     Conv1D(filters=c_filters,
                         kernel_size=k_size,
@@ -1711,7 +1722,7 @@ def main(stock):
                 except Exception:
                     pass
 
-                model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+                model.compile(optimizer=Adam(learning_rate=lr), loss='mse')
                 return model
 
             # Buat model untuk inspeksi parameter sebelum pelatihan
@@ -1730,7 +1741,7 @@ def main(stock):
             with st.popover("Detail Arsitektur & Ringkasan Parameter"):
                 st.info(f'Lapisan Ekstraksi Fitur: `Conv1D` ({conv_filters} filter, kernel {kernel_size}, aktivasi {conv_activation}) untuk mengekstrak pola fitur spasial dari sekuens {seq_length} hari.', icon=":material/layers:")
                 st.warning(f'Lapisan Memori & Regulasi: `GRU` ({gru_units_1} unit, seq) $\\rightarrow$ `Dropout` ({dropout_rate}) $\\rightarrow$ `GRU` ({gru_units_2} unit) untuk menangkap pola temporal sekuensial.', icon=":material/memory:")
-                st.warning('Lapisan Output & Kompilasi: Lapisan `Dense(1)` dikompilasi dengan optimizer `Adam(learning_rate=0.001)` dan loss function `MSE`.', icon=":material/check_circle:")
+                st.warning('Lapisan Output & Kompilasi: Lapisan `Dense(1)` dikompilasi dengan optimizer `Adam` dan loss function `MSE`.', icon=":material/check_circle:")
                 
                 layer_data = []
                 for lyr in preview_model.layers:
@@ -1756,8 +1767,8 @@ def main(stock):
                     })
                 st.dataframe(pd.DataFrame(layer_data), use_container_width=True)
 
-            def get_model(seq_len):
-                return create_model(seq_len, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
+            def get_model(seq_len, lr=0.001):
+                return create_model(seq_len, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate, lr=lr)
 
             st.success("Perancangan Model CNN-GRU selesai!")
 
@@ -1771,19 +1782,30 @@ def main(stock):
 
         if days >= 120:
 
-            with st.popover("Mengubah Jumlah Epoch"):
+            with st.popover("⚙️ Pengaturan Jumlah Epoch"):
                 epoch_options = [1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 120, 150, 200, 300, 500]
                 epochs = st.select_slider("Jumlah Epoch", options=epoch_options, value=50)
                 st.info('Rekomendasi Default: **50 Epoch** (Rentang Paling Akurat: **40–100 Epoch**).', icon=":material/recommend:")
                 st.warning('Ket: Semakin banyak Jumlahnya (>150), maka waktu komputasi semakin lambat dan berisiko overfitting pada noise pasar.', icon=":material/timer_3_alt_1:")
                 st.info('Ket: Semakin sedikit Jumlahnya (<20), maka komputasi sangat cepat namun berisiko underfitting (bobot GRU belum konvergen).', icon=":material/speed:")
 
-            with st.popover("Mengubah Ukuran Batch"):
+            with st.popover("⚙️ Pengaturan Ukuran Batch"):
                 batch_size_options = [2, 4, 8, 16, 32, 64, 128, 256, 512]
                 batch_size = st.select_slider("Ukuran Batch", options=batch_size_options, value=32)
                 st.info('Rekomendasi Default: **32** (Rentang Paling Akurat: **16–32** untuk Time Series CNN-GRU).', icon=":material/recommend:")
                 st.warning('Ket: Ukuran kecil (4–16) memberikan regularisasi stokastik lebih baik namun komputasi relatif lebih lambat.', icon=":material/tune:")
                 st.info('Ket: Ukuran besar (128–512) mempercepat komputasi GPU/CPU namun rentan mengalami generalization gap pada data deret waktu.', icon=":material/bolt:")
+
+            with st.popover("⚙️ Pengaturan Learning Rate (Adam Optimizer)"):
+                lr_options = [0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01]
+                learning_rate = st.select_slider(
+                    "Tingkat Pembelajaran (Learning Rate)",
+                    options=lr_options,
+                    value=0.001,
+                    format_func=lambda x: f"{x:.4f}"
+                )
+                st.info('Rekomendasi Default: **0.0010** (Rentang Paling Akurat: **0.0005–0.0010**).', icon=":material/recommend:")
+                st.warning('Ket: Learning rate terlalu besar (>0.005) menyebabkan loss berosilasi atau tidak stabil. Terlalu kecil (<0.0005) membutuhkan epoch lebih banyak untuk konvergen.', icon=":material/tune:")
 
             # Define the time periods and their corresponding days
             def get_forecast_options(stock):
@@ -1845,11 +1867,30 @@ def main(stock):
             # Penggunaan fungsi
             forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
 
-            # Streamlit UI untuk memilih periode forecast
+            # Inisialisasi session state untuk periode terpilih jika belum ada atau berganti aset
+            fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}"
+            if fc_key not in st.session_state:
+                st.session_state[fc_key] = default_options
+
+            st.write("**Pilihan Periode Forecasting:**")
+            col_b1, col_b2, col_b3 = st.columns([1.2, 1.2, 1.2])
+            with col_b1:
+                if st.button("🔄 Pilih Default", help="Kembalikan ke pilihan periode default yang optimal sesuai data"):
+                    st.session_state[fc_key] = default_options
+                    st.rerun()
+            with col_b2:
+                if st.button("✅ Pilih Semua", help="Pilih semua horizon periode yang tersedia"):
+                    st.session_state[fc_key] = list(forecast_options_dict.keys())
+                    st.rerun()
+            with col_b3:
+                if st.button("❌ Hapus Semua", help="Kosongkan pilihan periode"):
+                    st.session_state[fc_key] = []
+                    st.rerun()
+
             selected_periods = st.multiselect(
-                "Pilih Periode Forecasting",
+                "Pilih Periode Forecasting:",
                 options=list(forecast_options_dict.keys()),
-                default=default_options
+                key=fc_key
             )
 
             # DATA PELATIHAN
@@ -1860,10 +1901,10 @@ def main(stock):
                 end_date = date.strptime(end_date, "%Y-%m-%d")
 
             # Cache the training function
-            def train_model(x_train, y_train, epochs, batch_size, _on_epoch_end):
+            def train_model(x_train, y_train, epochs, batch_size, lr_val, _on_epoch_end):
                 with st.spinner('Sedang Melatih model... Harap tunggu.'):
                     try:
-                        model = get_model(x_train.shape[1])
+                        model = get_model(x_train.shape[1], lr=lr_val)
                         history = model.fit(
                             x_train, y_train,
                             epochs=epochs,
@@ -1894,7 +1935,7 @@ def main(stock):
                     remaining_time = estimated_total_time - elapsed_time
                     time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
 
-                model, history = train_model(x_train, y_train, epochs, batch_size, on_epoch_end)
+                model, history = train_model(x_train, y_train, epochs, batch_size, learning_rate, on_epoch_end)
 
                 if history:
                     end_time = time.time()
@@ -1970,12 +2011,12 @@ def main(stock):
                 # Menampilkan Plot Interaktif dengan Plotly
                 st.subheader("Visualisasi Hasil")
                 fig_eval = plot_interactive_evaluation(actual_dates, y_test, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
-                st.plotly_chart(fig_eval, use_container_width=True)
+                st.plotly_chart(fig_eval, use_container_width=True, key="fig_eval_result_history")
 
                 with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Uji / Evaluasi)", expanded=False):
                     eval_sub_df = data.loc[actual_dates] if (len(actual_dates) > 0 and all(d in data.index for d in actual_dates)) else data.tail(len(y_test))
                     fig_eval_comp = plot_comprehensive_market_indicators(eval_sub_df, f'Indikator Pasar Komprehensif (Periode Uji {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-                    st.plotly_chart(fig_eval_comp, use_container_width=True)
+                    st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
 
                 with st.popover("Menampilkan Grafik Loss dan Val Loss"):
                         # Display final metrics
@@ -2077,12 +2118,12 @@ def main(stock):
                         y_label=f'Harga {asset_type}',
                         curr_prefix=curr_prefix
                     )
-                    st.plotly_chart(fig_fc, use_container_width=True)
+                    st.plotly_chart(fig_fc, use_container_width=True, key=f"fig_forecast_{forecast_period}_{i}")
 
                     with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
                         fc_slice_df = data.iloc[start_idx:]
                         fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-                        st.plotly_chart(fig_fc_comp, use_container_width=True)
+                        st.plotly_chart(fig_fc_comp, use_container_width=True, key=f"fig_forecast_comp_{forecast_period}_{i}")
 
                     # Data Line untuk grafik & kalkulasi
                     last_actual_price = safe_float(data['Close'].iloc[-1])
