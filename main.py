@@ -2293,6 +2293,16 @@ def main(stock, data_source="yfinance", api_key=""):
             "30 T": timedelta(days=365*30)
         }
 
+        def format_quick_button_label(lbl):
+            clean = lbl.strip()
+            if clean in ["1 H", "1H"]:
+                return ":orange[**1 H**]"
+            elif clean in ["4 H", "4H"]:
+                return ":red[**4 H**]"
+            elif clean in ["1 D", "1D"]:
+                return ":green[**1 D**]"
+            return lbl
+
         END_TIME_OFFSETS = [
             ("1 m", timedelta(minutes=1)),
             ("3 m", timedelta(minutes=3)),
@@ -2323,19 +2333,25 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.cmc_end_offset_btn = None
             else:
                 st.markdown("**Pilih Tanggal / Waktu Selesai (Data Historis):**")
-                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir:</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir (Khusus 1H 🟠, 4H 🔴, 1D 🟢):</b></small>", unsafe_allow_html=True)
                 
                 # Tombol Cepat Titik Akhir (1m - YTD)
                 btn_cols_1 = st.columns(6)
                 btn_cols_2 = st.columns(6)
                 for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
                     with btn_cols_1[b_i]:
-                        if st.button(t_lbl, key=f"btn_end_cmc_{t_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(t_lbl)
+                        b_type = "primary" if st.session_state.cmc_end_offset_btn == t_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_end_cmc_{t_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_end_offset_btn = t_lbl
+                            st.rerun()
                 for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[6:]):
                     with btn_cols_2[b_i]:
-                        if st.button(t_lbl, key=f"btn_end_cmc_{t_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(t_lbl)
+                        b_type = "primary" if st.session_state.cmc_end_offset_btn == t_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_end_cmc_{t_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_end_offset_btn = t_lbl
+                            st.rerun()
 
                 selected_end_offset = st.session_state.cmc_end_offset_btn
                 if selected_end_offset:
@@ -2370,38 +2386,37 @@ def main(stock, data_source="yfinance", api_key=""):
             if selected_cmc_method == "Pilihan Cepat Rentang Waktu (1m - 30T)":
                 cmc_preset_keys = list(PRESET_DURATIONS.keys())
                 
-                # Baris Tombol Cepat
-                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
+                # Baris Tombol Cepat (Warna khusus untuk 1H, 4H, 1D)
+                st.markdown("<small><b>Pilih Cepat via Tombol (Khusus 1H 🟠, 4H 🔴, 1D 🟢):</b></small>", unsafe_allow_html=True)
                 r_btn1 = st.columns(6)
                 r_btn2 = st.columns(6)
                 r_btn3 = st.columns(6)
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[:6]):
                     with r_btn1[idx_k]:
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(k_lbl)
+                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
+                            st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[6:12]):
                     with r_btn2[idx_k]:
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(k_lbl)
+                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
+                            st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[12:]):
                     with r_btn3[idx_k]:
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(k_lbl)
+                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
+                            st.rerun()
 
-                # Radiobox Pilihan Cepat
-                current_preset_idx = cmc_preset_keys.index(st.session_state.cmc_preset_selected) if st.session_state.cmc_preset_selected in cmc_preset_keys else len(cmc_preset_keys)-1
-                selected_preset = st.radio(
-                    "Radiobox Pilihan Rentang Waktu (CoinMarketCap):",
-                    options=cmc_preset_keys,
-                    index=current_preset_idx,
-                    horizontal=True,
-                    key="radio_cmc_presets"
-                )
-                if selected_preset != st.session_state.cmc_preset_selected:
-                    st.session_state.cmc_preset_selected = selected_preset
-
-                total_duration = PRESET_DURATIONS[st.session_state.cmc_preset_selected]
-                duration_str = f"Preset {st.session_state.cmc_preset_selected}"
+                active_cmc_preset = st.session_state.cmc_preset_selected
+                st.info(f"⏱️ Rentang Waktu Pelatihan Terpilih: **{active_cmc_preset}**")
+                total_duration = PRESET_DURATIONS[active_cmc_preset]
+                duration_str = f"Preset {active_cmc_preset}"
                 days = max(1, total_duration.days)
 
             elif selected_cmc_method == "Gunakan Jumlah Hari / Jam / Menit Terakhir":
@@ -2490,7 +2505,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.yf_end_offset_btn = None
             else:
                 st.markdown("**Pilih Tanggal Selesai Pelatihan:**")
-                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir:</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir (Khusus 1D 🟢):</b></small>", unsafe_allow_html=True)
                 
                 yf_end_offsets = [
                     ("1 D", timedelta(days=1)),
@@ -2502,8 +2517,11 @@ def main(stock, data_source="yfinance", api_key=""):
                 btn_yf_cols = st.columns(5)
                 for b_i, (t_lbl, t_delta) in enumerate(yf_end_offsets):
                     with btn_yf_cols[b_i]:
-                        if st.button(t_lbl, key=f"btn_end_yf_{t_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(t_lbl)
+                        b_type = "primary" if st.session_state.yf_end_offset_btn == t_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_end_yf_{t_lbl}", type=b_type, use_container_width=True):
                             st.session_state.yf_end_offset_btn = t_lbl
+                            st.rerun()
 
                 selected_yf_offset = st.session_state.yf_end_offset_btn
                 if selected_yf_offset:
@@ -2536,30 +2554,27 @@ def main(stock, data_source="yfinance", api_key=""):
             yf_preset_keys = ["1 D", "1 W", "1 M", "90 D", "YTD", "2 T", "3 T", "4 T", "5 T", "10 T", "30 T"]
 
             if selected_method == "Pilihan Cepat Rentang Waktu (1D - 30T)":
-                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Pilih Cepat via Tombol (Khusus 1D 🟢):</b></small>", unsafe_allow_html=True)
                 r_btn_yf1 = st.columns(6)
                 r_btn_yf2 = st.columns(5)
                 for idx_k, k_lbl in enumerate(yf_preset_keys[:6]):
                     with r_btn_yf1[idx_k]:
-                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(k_lbl)
+                        b_type = "primary" if st.session_state.yf_preset_selected == k_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.yf_preset_selected = k_lbl
+                            st.rerun()
                 for idx_k, k_lbl in enumerate(yf_preset_keys[6:]):
                     with r_btn_yf2[idx_k]:
-                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", use_container_width=True):
+                        lbl_styled = format_quick_button_label(k_lbl)
+                        b_type = "primary" if st.session_state.yf_preset_selected == k_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.yf_preset_selected = k_lbl
+                            st.rerun()
 
-                current_yf_idx = yf_preset_keys.index(st.session_state.yf_preset_selected) if st.session_state.yf_preset_selected in yf_preset_keys else len(yf_preset_keys)-1
-                selected_yf_preset = st.radio(
-                    "Radiobox Pilihan Rentang Waktu (yFinance):",
-                    options=yf_preset_keys,
-                    index=current_yf_idx,
-                    horizontal=True,
-                    key="radio_yf_presets"
-                )
-                if selected_yf_preset != st.session_state.yf_preset_selected:
-                    st.session_state.yf_preset_selected = selected_yf_preset
-
-                total_duration = PRESET_DURATIONS[st.session_state.yf_preset_selected]
+                active_yf_preset = st.session_state.yf_preset_selected
+                st.info(f"⏱️ Rentang Waktu Pelatihan Terpilih: **{active_yf_preset}**")
+                total_duration = PRESET_DURATIONS[active_yf_preset]
                 days = max(120, total_duration.days)
                 start_date_obj = end_date_obj - timedelta(days=days)
 
