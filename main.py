@@ -1253,19 +1253,128 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     )
     return fig
 
+def calculate_vpvr(df, num_bins=28, value_area_pct=0.70):
+    """
+    Menghitung Volume Profile Visible Range (VPVR) dengan 3 parameter utama:
+    1. POC (Point of Control) - Level harga dengan volume transaksi tertinggi
+    2. VAH (Value Area High) & VAL (Value Area Low) - Rentang harga 70% total volume
+    3. Profil Volume Beli (Up Volume) & Volume Jual (Down Volume) per price bin
+    """
+    if df is None or df.empty:
+        return None
+    try:
+        close = extract_1d_array(df['Close'] if 'Close' in df.columns else df.iloc[:, 0])
+        if len(close) < 2:
+            return None
+            
+        high = extract_1d_array(df['High']) if 'High' in df.columns else close
+        low = extract_1d_array(df['Low']) if 'Low' in df.columns else close
+        open_p = extract_1d_array(df['Open']) if 'Open' in df.columns else close
+        vol = extract_1d_array(df['Volume']) if 'Volume' in df.columns else np.ones_like(close)
+        
+        vol = np.nan_to_num(vol, nan=1.0)
+        if np.all(vol == 0):
+            vol = np.ones_like(close)
+            
+        min_p = float(np.min(low))
+        max_p = float(np.max(high))
+        if min_p >= max_p:
+            max_p = min_p + (min_p * 0.01 if min_p > 0 else 1.0)
+            
+        bins = np.linspace(min_p, max_p, num_bins + 1)
+        bin_centers = (bins[:-1] + bins[1:]) / 2.0
+        bin_height = float(bins[1] - bins[0])
+        
+        up_vol = np.zeros(num_bins)
+        down_vol = np.zeros(num_bins)
+        total_bin_vol = np.zeros(num_bins)
+        
+        for i in range(len(close)):
+            p_c = close[i]
+            p_o = open_p[i] if i < len(open_p) else p_c
+            v = vol[i] if i < len(vol) else 1.0
+            idx = int(np.digitize(p_c, bins) - 1)
+            idx = max(0, min(num_bins - 1, idx))
+            
+            if p_c >= p_o:
+                up_vol[idx] += v
+            else:
+                down_vol[idx] += v
+            total_bin_vol[idx] += v
+            
+        poc_idx = int(np.argmax(total_bin_vol))
+        poc_price = float(bin_centers[poc_idx])
+        
+        # Hitung 70% Value Area (VAH & VAL)
+        total_volume = np.sum(total_bin_vol)
+        target_va_vol = total_volume * value_area_pct
+        
+        curr_vol = total_bin_vol[poc_idx]
+        up_idx = poc_idx
+        down_idx = poc_idx
+        
+        while curr_vol < target_va_vol and (up_idx < num_bins - 1 or down_idx > 0):
+            next_up = total_bin_vol[up_idx + 1] if up_idx < num_bins - 1 else 0
+            next_down = total_bin_vol[down_idx - 1] if down_idx > 0 else 0
+            
+            if next_up >= next_down and up_idx < num_bins - 1:
+                up_idx += 1
+                curr_vol += next_up
+            elif down_idx > 0:
+                down_idx -= 1
+                curr_vol += next_down
+            elif up_idx < num_bins - 1:
+                up_idx += 1
+                curr_vol += next_up
+            else:
+                break
+                
+        val_price = float(bin_centers[down_idx])
+        vah_price = float(bin_centers[up_idx])
+        max_b_vol = float(np.max(total_bin_vol)) if len(total_bin_vol) > 0 else 1.0
+        
+        return {
+            'bins': bins,
+            'bin_centers': bin_centers,
+            'bin_height': bin_height,
+            'up_vol': up_vol,
+            'down_vol': down_vol,
+            'total_vol': total_bin_vol,
+            'poc_price': poc_price,
+            'poc_idx': poc_idx,
+            'vah_price': vah_price,
+            'val_price': val_price,
+            'max_bin_vol': max_b_vol if max_b_vol > 0 else 1.0
+        }
+    except Exception:
+        return None
+
 def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="Crypto"):
     if df is None or df.empty:
         return go.Figure()
         
     dates = df.index if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+    if hasattr(dates, 'tz') and dates.tz is not None:
+        dates = dates.tz_localize(None)
+        
     close_arr = extract_1d_array(df['Close'] if 'Close' in df.columns else df.iloc[:, 0])
-    n = min(len(dates), len(close_arr))
+    open_arr = extract_1d_array(df['Open']) if 'Open' in df.columns else close_arr
+    high_arr = extract_1d_array(df['High']) if 'High' in df.columns else close_arr
+    low_arr = extract_1d_array(df['Low']) if 'Low' in df.columns else close_arr
+    
+    n = min(len(dates), len(close_arr), len(open_arr), len(high_arr), len(low_arr))
     if n == 0:
         return go.Figure()
         
     dates = dates[:n]
     close_arr = close_arr[:n]
-    vwap_arr = calculate_vwap_series(df)[:n]
+    open_arr = open_arr[:n]
+    high_arr = high_arr[:n]
+    low_arr = low_arr[:n]
+    
+    mean_arr = (open_arr + high_arr + low_arr + close_arr) / 4.0
+    grand_mean = float(np.mean(close_arr))
+    
     vol_arr = extract_1d_array(df['Volume'])[:n] if 'Volume' in df.columns else np.zeros(n)
     atr_arr = calculate_atr_series(df)[:n]
     delta_vol, delta_cols = calculate_daily_delta_volume_series(df)
@@ -1274,75 +1383,232 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
     vol_bar_cols = get_bar_colors_for_volume(df)
     vol_bar_cols = vol_bar_cols[:n] if vol_bar_cols is not None and len(vol_bar_cols) >= n else None
     
-    # Subplot 3 Baris: 1. Harga & VWAP, 2. Volume & ATR, 3. Delta Volume Harian
+    # Subplot 3 Baris: 1. Candlestick & VPVR, 2. Volume & ATR, 3. Delta Volume Harian
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.07,
-        row_heights=[0.48, 0.26, 0.26],
+        row_heights=[0.50, 0.25, 0.25],
         specs=[
             [{"secondary_y": False}],
             [{"secondary_y": True}],
             [{"secondary_y": False}]
         ],
         subplot_titles=[
-            f"1. Tren Harga {asset_type} & VWAP",
+            f"1. Candlestick {asset_type}, Rata-rata (Mean) & VPVR (Volume Profile: POC, VAH, VAL)",
             "2. Volume Transaksi (Bar) & ATR Volatilitas (Garis Kuning)",
             "3. Delta Volume Harian (Net Buy vs Net Sell)"
         ]
     )
     
     # ----------------------------------------------------
-    # Row 1: Close Price & VWAP
+    # Row 1: Candlestick, Mean / Average, and VPVR Profile
     # ----------------------------------------------------
-    is_price_up = (close_arr[-1] >= close_arr[0]) if len(close_arr) >= 2 else True
-    c_color = '#00C853' if is_price_up else '#D50000'
-    
-    max_idx = int(np.argmax(close_arr)) if len(close_arr) > 0 else -1
-    min_idx = int(np.argmin(close_arr)) if len(close_arr) > 0 else -1
-    
-    hover_close = []
+    hover_candle = []
     for i in range(n):
-        d_str = dates[i].strftime('%Y-%m-%d')
-        c_str = smart_format(close_arr[i], prefix=curr_prefix)
-        tag = ""
-        if i == max_idx and max_idx != min_idx:
-            tag = '<br><b style="color:#00C853;">▲ [Harga Tertinggi (High)]</b>'
-        elif i == min_idx and max_idx != min_idx:
-            tag = '<br><b style="color:#D50000;">▼ [Harga Terendah (Low)]</b>'
-        hover_close.append(f"<b>Tanggal:</b> {d_str}<br><b>Close:</b> {c_str}{tag}")
+        d_str = format_timestamp_for_plot(dates[i])
+        o_s = smart_format(open_arr[i], prefix=curr_prefix)
+        h_s = smart_format(high_arr[i], prefix=curr_prefix)
+        l_s = smart_format(low_arr[i], prefix=curr_prefix)
+        c_s = smart_format(close_arr[i], prefix=curr_prefix)
+        m_s = smart_format(mean_arr[i], prefix=curr_prefix)
+        v_s = f"{vol_arr[i]:,.0f}" if i < len(vol_arr) else "-"
+        chg_candle = ((close_arr[i] - open_arr[i]) / open_arr[i]) * 100.0 if open_arr[i] > 0 else 0.0
+        chg_sign = "+" if chg_candle >= 0 else ""
+        chg_col = "#00C853" if chg_candle >= 0 else "#D50000"
+        hover_candle.append(
+            f"<b>Waktu:</b> {d_str}<br>"
+            f"<b>Open:</b> {o_s} | <b>Close:</b> {c_s} (<span style='color:{chg_col};'>{chg_sign}{chg_candle:.2f}%</span>)<br>"
+            f"<b>High:</b> {h_s} | <b>Low:</b> {l_s}<br>"
+            f"<b>Rata-rata (Mean):</b> {m_s}<br>"
+            f"<b>Volume:</b> {v_s}"
+        )
     
-    fig.add_trace(go.Scatter(
-        x=dates, y=close_arr, mode='lines', name=f'Harga {asset_type}',
-        line=dict(color=c_color, width=2.2),
+    # 1. Trace Candlestick (Fill Hijau / Merah)
+    fig.add_trace(go.Candlestick(
+        x=dates,
+        open=open_arr,
+        high=high_arr,
+        low=low_arr,
+        close=close_arr,
+        name=f'Candlestick {asset_type}',
+        increasing_line_color='#00C853',
+        increasing_fillcolor='#00C853',
+        decreasing_line_color='#D50000',
+        decreasing_fillcolor='#D50000',
         hoverinfo='text',
-        hovertext=hover_close
+        hovertext=hover_candle
     ), row=1, col=1)
     
-    if len(vwap_arr) == n:
-        fig.add_trace(go.Scatter(
-            x=dates, y=vwap_arr, mode='lines', name='VWAP',
-            line=dict(color='#00B0FF', width=1.8, dash='dash'),
-            hoverinfo='text',
-            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>VWAP:</b> {smart_format(v, prefix=curr_prefix)}" for d, v in zip(dates, vwap_arr)]
-        ), row=1, col=1)
-        
-    # High/Low on Row 1 (Price)
+    # 2. Garis Mean / Average per Candle (Oranye)
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=mean_arr,
+        mode='lines',
+        name='Harga Rata-rata (Mean Candle)',
+        line=dict(color='#FF9800', width=1.6, dash='dot'),
+        hoverinfo='text',
+        hovertext=[f"<b>Waktu:</b> {format_timestamp_for_plot(d)}<br><b>Rata-rata (Mean):</b> {smart_format(m, prefix=curr_prefix)}" for d, m in zip(dates, mean_arr)]
+    ), row=1, col=1)
+    
+    # 3. Garis Horizontal Grand Mean
+    fig.add_hline(
+        y=grand_mean,
+        line_dash="dash",
+        line_color="#FFA000",
+        line_width=1.3,
+        annotation_text=f"Grand Mean: {smart_format(grand_mean, prefix=curr_prefix)}",
+        annotation_position="top right",
+        annotation_font_size=10,
+        annotation_font_color="#FFA000",
+        row=1, col=1
+    )
+    
+    # 4. Marker High and Low
+    max_idx = int(np.argmax(high_arr)) if len(high_arr) > 0 else -1
+    min_idx = int(np.argmin(low_arr)) if len(low_arr) > 0 else -1
     if max_idx >= 0 and min_idx >= 0 and max_idx != min_idx:
         fig.add_trace(go.Scatter(
-            x=[dates[max_idx]], y=[close_arr[max_idx]], mode='markers+text', name='Harga Tertinggi',
+            x=[dates[max_idx]], y=[high_arr[max_idx]], mode='markers+text', name='Harga Tertinggi (High)',
             marker=dict(color='#00C853', size=9, symbol='triangle-up'),
-            text=[f"▲ High: {smart_format(close_arr[max_idx], prefix=curr_prefix)}"],
+            text=[f"▲ High: {smart_format(high_arr[max_idx], prefix=curr_prefix)}"],
             textposition="top center", textfont=dict(color='#00C853', size=11),
             hoverinfo='skip', showlegend=False
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
-            x=[dates[min_idx]], y=[close_arr[min_idx]], mode='markers+text', name='Harga Terendah',
+            x=[dates[min_idx]], y=[low_arr[min_idx]], mode='markers+text', name='Harga Terendah (Low)',
             marker=dict(color='#D50000', size=9, symbol='triangle-down'),
-            text=[f"▼ Low: {smart_format(close_arr[min_idx], prefix=curr_prefix)}"],
+            text=[f"▼ Low: {smart_format(low_arr[min_idx], prefix=curr_prefix)}"],
             textposition="bottom center", textfont=dict(color='#D50000', size=11),
             hoverinfo='skip', showlegend=False
         ), row=1, col=1)
+        
+    # 5. VPVR (Volume Profile Visible Range) di sebelah kiri
+    vpvr = calculate_vpvr(df.iloc[:n])
+    if vpvr is not None and len(dates) >= 2:
+        t_start = dates[0]
+        t_end = dates[-1]
+        total_span = t_end - t_start
+        max_vpvr_width = total_span * 0.18  # 18% dari lebar chart di sisi kiri
+        
+        vpvr_hover_x = []
+        vpvr_hover_y = []
+        vpvr_hover_text = []
+        
+        for k in range(len(vpvr['bin_centers'])):
+            b_center = vpvr['bin_centers'][k]
+            b_h = vpvr['bin_height'] * 0.42
+            b_y0 = b_center - b_h
+            b_y1 = b_center + b_h
+            
+            up_vol_val = vpvr['up_vol'][k]
+            down_vol_val = vpvr['down_vol'][k]
+            tot_vol_val = vpvr['total_vol'][k]
+            
+            if tot_vol_val <= 0:
+                continue
+                
+            w_up = (up_vol_val / vpvr['max_bin_vol']) * max_vpvr_width
+            w_down = (down_vol_val / vpvr['max_bin_vol']) * max_vpvr_width
+            
+            x_up_end = t_start + w_up
+            x_tot_end = x_up_end + w_down
+            
+            # Bar Beli (Hijau)
+            if w_up > pd.Timedelta(0):
+                fig.add_shape(
+                    type="rect",
+                    x0=t_start, x1=x_up_end,
+                    y0=b_y0, y1=b_y1,
+                    fillcolor="rgba(0, 200, 83, 0.42)",
+                    line=dict(width=0),
+                    row=1, col=1
+                )
+            # Bar Jual (Merah)
+            if w_down > pd.Timedelta(0):
+                fig.add_shape(
+                    type="rect",
+                    x0=x_up_end, x1=x_tot_end,
+                    y0=b_y0, y1=b_y1,
+                    fillcolor="rgba(213, 0, 0, 0.42)",
+                    line=dict(width=0),
+                    row=1, col=1
+                )
+                
+            vpvr_hover_x.append(t_start + (w_up + w_down) / 2.0)
+            vpvr_hover_y.append(b_center)
+            vpvr_hover_text.append(
+                f"<b>[VPVR Volume Profile]</b><br>"
+                f"<b>Tingkat Harga:</b> {smart_format(b_center, prefix=curr_prefix)}<br>"
+                f"<b>Volume Beli (Up):</b> {up_vol_val:,.0f}<br>"
+                f"<b>Volume Jual (Down):</b> {down_vol_val:,.0f}<br>"
+                f"<b>Total Volume:</b> {tot_vol_val:,.0f}"
+            )
+            
+        if vpvr_hover_x:
+            fig.add_trace(go.Scatter(
+                x=vpvr_hover_x,
+                y=vpvr_hover_y,
+                mode='markers',
+                marker=dict(size=1, opacity=0),
+                name='VPVR Volume Profile (Beli 🟢 / Jual 🔴)',
+                hoverinfo='text',
+                hovertext=vpvr_hover_text,
+                showlegend=True
+            ), row=1, col=1)
+
+        # Garis POC (Point of Control)
+        fig.add_shape(
+            type="line",
+            x0=t_start, x1=t_end,
+            y0=vpvr['poc_price'], y1=vpvr['poc_price'],
+            line=dict(color="#FF1744", width=2.0, dash="solid"),
+            row=1, col=1
+        )
+        fig.add_annotation(
+            x=t_end, y=vpvr['poc_price'],
+            text=f"POC: {smart_format(vpvr['poc_price'], prefix=curr_prefix)}",
+            showarrow=False,
+            font=dict(color="#FF1744", size=10),
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            xanchor="right", yanchor="bottom",
+            row=1, col=1
+        )
+
+        # Garis VAH & VAL (Value Area High & Low 70%)
+        fig.add_shape(
+            type="line",
+            x0=t_start, x1=t_end,
+            y0=vpvr['vah_price'], y1=vpvr['vah_price'],
+            line=dict(color="#0288D1", width=1.5, dash="dash"),
+            row=1, col=1
+        )
+        fig.add_annotation(
+            x=t_end, y=vpvr['vah_price'],
+            text=f"VAH (70%): {smart_format(vpvr['vah_price'], prefix=curr_prefix)}",
+            showarrow=False,
+            font=dict(color="#0288D1", size=9),
+            bgcolor="rgba(255, 255, 255, 0.7)",
+            xanchor="right", yanchor="bottom",
+            row=1, col=1
+        )
+
+        fig.add_shape(
+            type="line",
+            x0=t_start, x1=t_end,
+            y0=vpvr['val_price'], y1=vpvr['val_price'],
+            line=dict(color="#0288D1", width=1.5, dash="dash"),
+            row=1, col=1
+        )
+        fig.add_annotation(
+            x=t_end, y=vpvr['val_price'],
+            text=f"VAL (70%): {smart_format(vpvr['val_price'], prefix=curr_prefix)}",
+            showarrow=False,
+            font=dict(color="#0288D1", size=9),
+            bgcolor="rgba(255, 255, 255, 0.7)",
+            xanchor="right", yanchor="top",
+            row=1, col=1
+        )
         
     # ----------------------------------------------------
     # Row 2: Volume (Bar) and ATR (Line on secondary y-axis)
@@ -1353,14 +1619,14 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
     if len(vol_arr) > 0 and not np.all(vol_arr == 0):
         hover_vol = []
         for i in range(n):
-            d_str = dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(dates[i])
             v_val = vol_arr[i]
             tag = ""
             if i == vol_max_idx and vol_max_idx != vol_min_idx:
                 tag = '<br><b style="color:#00C853;">▲ [Volume Tertinggi (High)]</b>'
             elif i == vol_min_idx and vol_max_idx != vol_min_idx:
                 tag = '<br><b style="color:#D50000;">▼ [Volume Terendah (Low)]</b>'
-            hover_vol.append(f"<b>Tanggal:</b> {d_str}<br><b>Volume:</b> {v_val:,.0f}{tag}")
+            hover_vol.append(f"<b>Waktu:</b> {d_str}<br><b>Volume:</b> {v_val:,.0f}{tag}")
 
         if n > 200:
             fig.add_trace(go.Scatter(
@@ -1401,14 +1667,14 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
     if len(atr_arr) == n:
         hover_atr = []
         for i in range(n):
-            d_str = dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(dates[i])
             a_val = atr_arr[i]
             tag = ""
             if i == atr_max_idx and atr_max_idx != atr_min_idx:
                 tag = '<br><b style="color:#FFB300;">▲ [ATR Tertinggi (High)]</b>'
             elif i == atr_min_idx and atr_max_idx != atr_min_idx:
                 tag = '<br><b style="color:#FF6D00;">▼ [ATR Terendah (Low)]</b>'
-            hover_atr.append(f"<b>Tanggal:</b> {d_str}<br><b>ATR:</b> {smart_format(a_val, prefix=curr_prefix)}{tag}")
+            hover_atr.append(f"<b>Waktu:</b> {d_str}<br><b>ATR:</b> {smart_format(a_val, prefix=curr_prefix)}{tag}")
 
         fig.add_trace(go.Scatter(
             x=dates, y=atr_arr, mode='lines', name='ATR (Volatilitas)',
@@ -1445,7 +1711,7 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
 
         hover_delta = []
         for i in range(len(delta_vol)):
-            d_str = dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(dates[i])
             dv = delta_vol[i]
             sign = "+" if dv >= 0 else ""
             tag = ""
@@ -1453,7 +1719,7 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
                 tag = '<br><b style="color:#00C853;">▲ [Delta Tertinggi (Net Buy Max)]</b>'
             elif i == delta_min_idx and delta_max_idx != delta_min_idx:
                 tag = '<br><b style="color:#D50000;">▼ [Delta Terendah (Net Sell Max)]</b>'
-            hover_delta.append(f"<b>Tanggal:</b> {d_str}<br><b>Delta:</b> {sign}{dv:,.0f}{tag}")
+            hover_delta.append(f"<b>Waktu:</b> {d_str}<br><b>Delta:</b> {sign}{dv:,.0f}{tag}")
 
         if n > 200:
             fig.add_trace(go.Scatter(
@@ -1493,14 +1759,15 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
         margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         template='plotly_white',
-        height=720,
-        showlegend=True
+        height=740,
+        showlegend=True,
+        xaxis_rangeslider_visible=False
     )
     fig.update_yaxes(title_text=f"Harga {asset_type}", row=1, col=1)
     fig.update_yaxes(title_text="Volume", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="ATR", row=2, col=1, secondary_y=True)
     fig.update_yaxes(title_text="Net Delta", row=3, col=1)
-    fig.update_xaxes(title_text="Tanggal", row=3, col=1)
+    fig.update_xaxes(title_text="Waktu / Tanggal", row=3, col=1)
     return fig
 
 def get_metric_badge_info(category):
@@ -1902,8 +2169,8 @@ def main(stock, data_source="yfinance", api_key=""):
         if fig1 is not None:
             st.plotly_chart(fig1, use_container_width=True, key="fig_full_data_history")
 
-        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
-            fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+        with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
+            fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
             if fig_full_comp is not None:
                 st.plotly_chart(fig_full_comp, use_container_width=True, key="fig_full_data_comp_indicators")
 
@@ -2055,13 +2322,13 @@ def main(stock, data_source="yfinance", api_key=""):
         if fig_train is not None:
             st.plotly_chart(fig_train, use_container_width=True, key="fig_train_data_history")
 
-        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
-            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+        with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
+            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
             if fig_train_comp is not None:
                 st.plotly_chart(fig_train_comp, use_container_width=True, key="fig_train_data_comp_indicators")
 
-        # Toggle Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta
-        expander_title = "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
+        # Toggle Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta
+        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
         with st.expander(expander_title, expanded=False):
             if not data.empty:
                 if is_cmc:
@@ -2086,8 +2353,8 @@ def main(stock, data_source="yfinance", api_key=""):
                         ("1 Tahun (YTD)", get_period_slice(data, 365), get_change_pct(data, 365))
                     ]
                 
-                # 1. Baris Chart Harga & VWAP Disatukan
-                st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} & VWAP (Garis Hijau/Merah: Close, Garis Biru Putus-putus: VWAP):**")
+                # 1. Baris Chart Harga (Garis Close Tanpa VWAP)
+                st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Garis Hijau: Tren Naik / Garis Merah: Tren Turun):**")
                 cols_price = st.columns(min(len(period_slices), 5))
                 for idx, (label, s_df, chg) in enumerate(period_slices):
                     col = cols_price[idx % 5]
@@ -2100,10 +2367,9 @@ def main(stock, data_source="yfinance", api_key=""):
                         else:
                             badge_sign = "-"
                         st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
-                        if not s_df.empty and 'Close' in s_df.columns:
+                        if not s_df.empty and ('Close' in s_df.columns or len(s_df) > 0):
                             is_pos = (chg >= 0) if chg is not None else True
-                            vwap_s = calculate_vwap_series(s_df)
-                            fig = render_combined_price_vwap_sparkline(s_df['Close'], vwap_s, is_positive=is_pos)
+                            fig = render_sparkline_chart(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0], is_positive=is_pos, chart_type='line', fill=True)
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
@@ -2639,9 +2905,9 @@ def main(stock, data_source="yfinance", api_key=""):
                 if fig_eval is not None:
                     st.plotly_chart(fig_eval, use_container_width=True, key="fig_eval_chart")
 
-                with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Pengujian)", expanded=False):
+                with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pengujian)", expanded=False):
                     test_df = data.iloc[-len(y_test):]
-                    fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                    fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
                     if fig_eval_comp is not None:
                         st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
 
@@ -2769,9 +3035,9 @@ def main(stock, data_source="yfinance", api_key=""):
                     if fig_fc is not None:
                         st.plotly_chart(fig_fc, use_container_width=True, key=f"fig_forecast_{forecast_period}_{i}")
 
-                    with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
+                    with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
                         fc_slice_df = data.iloc[start_idx:]
-                        fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                        fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
                         if fig_fc_comp is not None:
                             st.plotly_chart(fig_fc_comp, use_container_width=True, key=f"fig_forecast_comp_{forecast_period}_{i}")
 
