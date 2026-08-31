@@ -1909,6 +1909,14 @@ def main(stock, data_source="yfinance", api_key=""):
 
         with st.popover("Tampilkan Semua Data"):
             st.write(format_df_for_display(full_data))
+            csv_full = full_data.to_csv().encode('utf-8')
+            st.download_button(
+                label="📥 Unduh Data Keseluruhan sebagai CSV",
+                data=csv_full,
+                file_name=f"data_keseluruhan_{stock}.csv",
+                mime="text/csv",
+                key="btn_dl_full_data"
+            )
 
         # DATA PELATIHAN
         st.subheader("Pengaturan Data Pelatihan")
@@ -1941,7 +1949,6 @@ def main(stock, data_source="yfinance", api_key=""):
             days = total_days
             
             duration_str = f"{years_ago} Tahun {months_ago} Bulan {days_ago} Hari {hours_ago} Jam {mins_ago} Menit {secs_ago} Detik"
-            st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
 
         else:
             use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
@@ -2022,8 +2029,36 @@ def main(stock, data_source="yfinance", api_key=""):
                 actual_days = 0
                 duration_str = "0 Tahun 0 Bulan 0 Hari"
 
-            st.subheader("Data Pelatihan yang telah dipilih")
+        st.subheader("Data Pelatihan yang telah dipilih")
+        if is_cmc:
+            st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
+        else:
             st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
+
+        st.write("Mulai")
+        st.write(format_df_for_display(data.head(1)))
+        st.write("Hingga")
+        st.write(format_df_for_display(data.tail(1)))
+
+        if not data.empty and len(data) >= 2:
+            c_start_t = safe_float(data['Close'].iloc[0])
+            c_end_t = safe_float(data['Close'].iloc[-1])
+            tot_chg_t = ((c_end_t - c_start_t) / c_start_t) * 100.0 if c_start_t > 0 else 0.0
+            tot_sign_t = f":green[▲ +{tot_chg_t:,.2f}%]" if tot_chg_t >= 0 else f":red[▼ {tot_chg_t:,.2f}%]"
+            tot_diff_t = c_end_t - c_start_t
+            diff_sign_t = "+" if tot_diff_t >= 0 else ""
+            tot_diff_str_t = smart_format(tot_diff_t, prefix=curr_prefix)
+            st.markdown(f"**Performa Perubahan Data Pelatihan:** {tot_sign_t} (`{diff_sign_t}{tot_diff_str_t}`)")
+
+        # Plot Interaktif dengan Plotly untuk data pelatihan (Garis Kuning)
+        fig_train = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#D6C36B', curr_prefix=curr_prefix)
+        if fig_train is not None:
+            st.plotly_chart(fig_train, use_container_width=True, key="fig_train_data_history")
+
+        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
+            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+            if fig_train_comp is not None:
+                st.plotly_chart(fig_train_comp, use_container_width=True, key="fig_train_data_comp_indicators")
 
         # Toggle Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta
         expander_title = "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
@@ -2123,6 +2158,14 @@ def main(stock, data_source="yfinance", api_key=""):
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
             st.write(format_df_for_display(data))
+            csv_train = data.to_csv().encode('utf-8')
+            st.download_button(
+                label="📥 Unduh Data Pelatihan sebagai CSV",
+                data=csv_train,
+                file_name=f"data_pelatihan_{stock}.csv",
+                mime="text/csv",
+                key="btn_dl_train_data"
+            )
 
     with st.expander("3. Pra-pemrosesan Data"):
 
@@ -2602,6 +2645,21 @@ def main(stock, data_source="yfinance", api_key=""):
                     if fig_eval_comp is not None:
                         st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
 
+                with st.popover("Tampilkan Data Pengujian & Hasil Prediksi Uji"):
+                    eval_df = pd.DataFrame({
+                        'Tanggal': [format_timestamp_for_plot(d) for d in actual_dates],
+                        'Harga Aktual': [smart_format(v, prefix=curr_prefix) for v in y_test_original.flatten()],
+                        'Prediksi Uji Model': [smart_format(v, prefix=curr_prefix) for v in y_pred.flatten()]
+                    })
+                    st.dataframe(eval_df, use_container_width=True)
+                    st.download_button(
+                        label="📥 Unduh Data Pengujian sebagai CSV",
+                        data=eval_df.to_csv(index=False).encode('utf-8'),
+                        file_name=f"evaluasi_pengujian_{stock}.csv",
+                        mime="text/csv",
+                        key="btn_dl_eval_data"
+                    )
+
                 with st.popover("Tampilkan Detail Metrik Tambahan"):
                     st.markdown(f"- **NRMSE (Normalized RMSE):** {perf_eval.get('nrmse', 0):.4f} ({perf_eval.get('nrmse_pct', 0):.2f}% dari rata-rata)")
                     mda_val = perf_eval.get('mda')
@@ -2756,6 +2814,13 @@ def main(stock, data_source="yfinance", api_key=""):
 
                         with st.popover("Tampilkan Tabel Prediksi"):
                             st.dataframe(table_df, use_container_width=True)
+                            st.download_button(
+                                label="📥 Unduh Tabel Prediksi sebagai CSV",
+                                data=table_df.to_csv(index=False).encode('utf-8'),
+                                file_name=f"prediksi_{stock}_{forecast_period}.csv",
+                                mime="text/csv",
+                                key=f"btn_dl_pred_{forecast_period}_{i}"
+                            )
 
                         st.subheader("Ringkasan Prediksi & Proyeksi Tren")
 
