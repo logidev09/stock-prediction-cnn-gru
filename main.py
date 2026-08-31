@@ -805,7 +805,69 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         proj_max_dt = f_dates[proj_max_idx]
         proj_min_dt = f_dates[proj_min_idx]
 
-        # --- A. GARIS DAN TITIK PROYEKSI TREN AKTUAL (Visual Traces with hoverinfo='skip') ---
+        # =========================================================================
+        # --- A. HARGA PREDIKSI MODEL (Ditaruh DULUAN agar posisinya di background) ---
+        # =========================================================================
+        # 1. Transisi dari Uji Terakhir ke Prediksi Pertama
+        if last_test_date is not None and last_test_price is not None:
+            is_past_or_today_p0 = (f_dates[0] <= today_dt)
+            dash_p0 = 'dot' if is_past_or_today_p0 else 'solid'
+            fig.add_trace(go.Scatter(
+                x=[last_test_date, f_dates[0]],
+                y=[last_test_price, f_prices[0]],
+                mode='lines',
+                line=dict(color='#107EDE', width=2.0, dash=dash_p0),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
+        # 2. Segmen Prediksi Model berikutnya
+        for idx in range(n_f - 1):
+            d_next = f_dates[idx + 1]
+            dash_p = 'dot' if (d_next <= today_dt) else 'solid'
+            fig.add_trace(go.Scatter(
+                x=[f_dates[idx], d_next],
+                y=[f_prices[idx], f_prices[idx + 1]],
+                mode='lines+markers',
+                line=dict(color='#107EDE', width=2.0, dash=dash_p),
+                marker=dict(size=5, color='#107EDE'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
+        # 3. Master Hover Trace untuk Harga Prediksi Model
+        hover_pred_fc = []
+        base_test_ref = last_test_price if (last_test_price is not None and last_test_price > 0) else f_prices[0]
+        for i in range(n_f):
+            d_str = f_dates[i].strftime('%Y-%m-%d')
+            p_str = smart_format(f_prices[i], prefix=curr_prefix)
+            ret_val = f_prices[i] - base_test_ref
+            ret_pct = (ret_val / base_test_ref) * 100.0 if base_test_ref > 0 else 0.0
+            ret_sign = "+" if ret_val > 0 else ("-" if ret_val < 0 else "")
+            ret_arrow = "▲" if ret_val >= 0 else "▼"
+            ret_color = "#00C853" if ret_val >= 0 else "#D50000"
+            ret_diff_str = smart_format(abs(ret_val), prefix=curr_prefix)
+
+            hover_pred_fc.append(
+                f"<b>Tanggal:</b> {d_str}<br>"
+                f"<b>Harga Prediksi Model:</b> {p_str}<br>"
+                f"<b>Estimasi Return Model:</b> <span style='color:{ret_color};'>{ret_arrow} {ret_sign}{abs(ret_pct):.2f}% ({ret_sign}{ret_diff_str})</span>"
+            )
+
+        fig.add_trace(go.Scatter(
+            x=f_dates,
+            y=f_prices,
+            mode='markers',
+            name='Harga Prediksi Model',
+            marker=dict(size=5, color='#107EDE'),
+            hoverinfo='text',
+            hovertext=hover_pred_fc,
+            showlegend=True
+        ))
+
+        # =========================================================================
+        # --- B. PROYEKSI TREN AKTUAL (Ditaruh SETELAHNYA agar berada di FOREGROUND / DEPAN) ---
+        # =========================================================================
         # 1. Transisi dari Aktual Terakhir ke Titik Proyeksi Pertama
         is_past_or_today_0 = (f_dates[0] <= today_dt)
         dash_style_0 = 'dot' if is_past_or_today_0 else 'solid'
@@ -816,8 +878,8 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             x=[last_act_dt, f_dates[0]],
             y=[last_act_pr, proj_prices[0]],
             mode='lines+markers',
-            line=dict(color=col_0, width=2.4, dash=dash_style_0),
-            marker=dict(size=7, color=col_0),
+            line=dict(color=col_0, width=2.6, dash=dash_style_0),
+            marker=dict(size=8, color=col_0),
             showlegend=False,
             hoverinfo='skip'
         ))
@@ -837,13 +899,13 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
                 x=[f_dates[idx], d_next],
                 y=[p_curr, p_next],
                 mode='lines+markers',
-                line=dict(color=seg_col, width=2.4, dash=dash_style),
-                marker=dict(size=7, color=seg_col),
+                line=dict(color=seg_col, width=2.6, dash=dash_style),
+                marker=dict(size=8, color=seg_col),
                 showlegend=False,
                 hoverinfo='skip'
             ))
 
-        # --- B. HOVER UNIFIKASI UNTUK PROYEKSI TREN AKTUAL (Single Hover Trace) ---
+        # 3. Hover Unifikasi untuk Proyeksi Tren Aktual
         hover_proj = []
         for i in range(n_f):
             d_str = f_dates[i].strftime('%Y-%m-%d')
@@ -875,71 +937,13 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             y=proj_prices,
             mode='markers',
             name='Proyeksi Tren Aktual (🟢 Naik / 🔴 Turun)',
-            marker=dict(size=7, color=marker_colors),
+            marker=dict(size=8, color=marker_colors),
             hoverinfo='text',
             hovertext=hover_proj,
             showlegend=True
         ))
 
-        # --- C. HARGA PREDIKSI MODEL (Visual Segments & Single Hover Trace) ---
-        # 1. Transisi dari Uji Terakhir ke Prediksi Pertama
-        if last_test_date is not None and last_test_price is not None:
-            is_past_or_today_p0 = (f_dates[0] <= today_dt)
-            dash_p0 = 'dot' if is_past_or_today_p0 else 'solid'
-            fig.add_trace(go.Scatter(
-                x=[last_test_date, f_dates[0]],
-                y=[last_test_price, f_prices[0]],
-                mode='lines',
-                line=dict(color='#107EDE', width=2.0, dash=dash_p0),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-
-        # 2. Segmen Prediksi Model berikutnya
-        for idx in range(n_f - 1):
-            d_next = f_dates[idx + 1]
-            dash_p = 'dot' if (d_next <= today_dt) else 'solid'
-            fig.add_trace(go.Scatter(
-                x=[f_dates[idx], d_next],
-                y=[f_prices[idx], f_prices[idx + 1]],
-                mode='lines+markers',
-                line=dict(color='#107EDE', width=2.2, dash=dash_p),
-                marker=dict(size=6, color='#107EDE'),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-
-        # 3. Master Hover Trace untuk Harga Prediksi Model
-        hover_pred_fc = []
-        base_test_ref = last_test_price if (last_test_price is not None and last_test_price > 0) else f_prices[0]
-        for i in range(n_f):
-            d_str = f_dates[i].strftime('%Y-%m-%d')
-            p_str = smart_format(f_prices[i], prefix=curr_prefix)
-            ret_val = f_prices[i] - base_test_ref
-            ret_pct = (ret_val / base_test_ref) * 100.0 if base_test_ref > 0 else 0.0
-            ret_sign = "+" if ret_val > 0 else ("-" if ret_val < 0 else "")
-            ret_arrow = "▲" if ret_val >= 0 else "▼"
-            ret_color = "#00C853" if ret_val >= 0 else "#D50000"
-            ret_diff_str = smart_format(abs(ret_val), prefix=curr_prefix)
-
-            hover_pred_fc.append(
-                f"<b>Tanggal:</b> {d_str}<br>"
-                f"<b>Harga Prediksi Model:</b> {p_str}<br>"
-                f"<b>Estimasi Return Model:</b> <span style='color:{ret_color};'>{ret_arrow} {ret_sign}{abs(ret_pct):.2f}% ({ret_sign}{ret_diff_str})</span>"
-            )
-
-        fig.add_trace(go.Scatter(
-            x=f_dates,
-            y=f_prices,
-            mode='markers',
-            name='Harga Prediksi Model',
-            marker=dict(size=6, color='#107EDE'),
-            hoverinfo='text',
-            hovertext=hover_pred_fc,
-            showlegend=True
-        ))
-
-    # --- D. PENANDA HIGH & LOW PADA CHART (Deduplicated Text Markers) ---
+    # --- C. PENANDA HIGH & LOW PADA CHART (Deduplicated Text Markers) ---
     # 1. High Aktual
     if act_max_dt is not None:
         fig.add_trace(go.Scatter(
@@ -1064,15 +1068,31 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
         ]
     )
     
+    # ----------------------------------------------------
     # Row 1: Close Price & VWAP
+    # ----------------------------------------------------
     is_price_up = (close_arr[-1] >= close_arr[0]) if len(close_arr) >= 2 else True
     c_color = '#00C853' if is_price_up else '#D50000'
+    
+    max_idx = int(np.argmax(close_arr)) if len(close_arr) > 0 else -1
+    min_idx = int(np.argmin(close_arr)) if len(close_arr) > 0 else -1
+    
+    hover_close = []
+    for i in range(n):
+        d_str = dates[i].strftime('%Y-%m-%d')
+        c_str = smart_format(close_arr[i], prefix=curr_prefix)
+        tag = ""
+        if i == max_idx and max_idx != min_idx:
+            tag = '<br><b style="color:#00C853;">▲ [Harga Tertinggi (High)]</b>'
+        elif i == min_idx and max_idx != min_idx:
+            tag = '<br><b style="color:#D50000;">▼ [Harga Terendah (Low)]</b>'
+        hover_close.append(f"<b>Tanggal:</b> {d_str}<br><b>Close:</b> {c_str}{tag}")
     
     fig.add_trace(go.Scatter(
         x=dates, y=close_arr, mode='lines', name=f'Harga {asset_type}',
         line=dict(color=c_color, width=2.2),
         hoverinfo='text',
-        hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Close:</b> {smart_format(c, prefix=curr_prefix)}" for d, c in zip(dates, close_arr)]
+        hovertext=hover_close
     ), row=1, col=1)
     
     if len(vwap_arr) == n:
@@ -1083,28 +1103,41 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>VWAP:</b> {smart_format(v, prefix=curr_prefix)}" for d, v in zip(dates, vwap_arr)]
         ), row=1, col=1)
         
-    # High/Low on Row 1
-    max_idx = int(np.argmax(close_arr))
-    min_idx = int(np.argmin(close_arr))
-    if max_idx != min_idx:
+    # High/Low on Row 1 (Price)
+    if max_idx >= 0 and min_idx >= 0 and max_idx != min_idx:
         fig.add_trace(go.Scatter(
-            x=[dates[max_idx]], y=[close_arr[max_idx]], mode='markers+text', name='Tertinggi (High)',
+            x=[dates[max_idx]], y=[close_arr[max_idx]], mode='markers+text', name='Harga Tertinggi',
             marker=dict(color='#00C853', size=9, symbol='triangle-up'),
             text=[f"▲ High: {smart_format(close_arr[max_idx], prefix=curr_prefix)}"],
             textposition="top center", textfont=dict(color='#00C853', size=11),
-            hoverinfo='skip'
+            hoverinfo='skip', showlegend=False
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
-            x=[dates[min_idx]], y=[close_arr[min_idx]], mode='markers+text', name='Terendah (Low)',
+            x=[dates[min_idx]], y=[close_arr[min_idx]], mode='markers+text', name='Harga Terendah',
             marker=dict(color='#D50000', size=9, symbol='triangle-down'),
             text=[f"▼ Low: {smart_format(close_arr[min_idx], prefix=curr_prefix)}"],
             textposition="bottom center", textfont=dict(color='#D50000', size=11),
-            hoverinfo='skip'
+            hoverinfo='skip', showlegend=False
         ), row=1, col=1)
         
+    # ----------------------------------------------------
     # Row 2: Volume (Bar) and ATR (Line on secondary y-axis)
+    # ----------------------------------------------------
+    vol_max_idx = int(np.argmax(vol_arr)) if len(vol_arr) > 0 and not np.all(vol_arr == 0) else -1
+    vol_min_idx = int(np.argmin(vol_arr)) if len(vol_arr) > 0 and not np.all(vol_arr == 0) else -1
+    
     if len(vol_arr) > 0 and not np.all(vol_arr == 0):
-        # Untuk rentang data panjang, tambahkan filled area halus agar visual volume tetap jelas terlihat
+        hover_vol = []
+        for i in range(n):
+            d_str = dates[i].strftime('%Y-%m-%d')
+            v_val = vol_arr[i]
+            tag = ""
+            if i == vol_max_idx and vol_max_idx != vol_min_idx:
+                tag = '<br><b style="color:#00C853;">▲ [Volume Tertinggi (High)]</b>'
+            elif i == vol_min_idx and vol_max_idx != vol_min_idx:
+                tag = '<br><b style="color:#D50000;">▼ [Volume Terendah (Low)]</b>'
+            hover_vol.append(f"<b>Tanggal:</b> {d_str}<br><b>Volume:</b> {v_val:,.0f}{tag}")
+
         if n > 200:
             fig.add_trace(go.Scatter(
                 x=dates, y=vol_arr, mode='lines',
@@ -1118,21 +1151,85 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             marker_color=vol_bar_cols if vol_bar_cols else '#00C853',
             opacity=1.0,
             hoverinfo='text',
-            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Volume:</b> {v:,.0f}" for d, v in zip(dates, vol_arr)]
+            hovertext=hover_vol
         ), row=2, col=1, secondary_y=False)
+
+        # High & Low Markers for Volume
+        if vol_max_idx >= 0 and vol_min_idx >= 0 and vol_max_idx != vol_min_idx:
+            fig.add_trace(go.Scatter(
+                x=[dates[vol_max_idx]], y=[vol_arr[vol_max_idx]], mode='markers+text', name='Volume Tertinggi',
+                marker=dict(color='#00C853', size=8, symbol='triangle-up'),
+                text=[f"▲ Vol High: {vol_arr[vol_max_idx]:,.0f}"],
+                textposition="top center", textfont=dict(color='#00C853', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=2, col=1, secondary_y=False)
+            fig.add_trace(go.Scatter(
+                x=[dates[vol_min_idx]], y=[vol_arr[vol_min_idx]], mode='markers+text', name='Volume Terendah',
+                marker=dict(color='#D50000', size=8, symbol='triangle-down'),
+                text=[f"▼ Vol Low: {vol_arr[vol_min_idx]:,.0f}"],
+                textposition="bottom center", textfont=dict(color='#D50000', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=2, col=1, secondary_y=False)
         
+    atr_max_idx = int(np.argmax(atr_arr)) if len(atr_arr) == n and len(atr_arr) > 0 else -1
+    atr_min_idx = int(np.argmin(atr_arr)) if len(atr_arr) == n and len(atr_arr) > 0 else -1
+
     if len(atr_arr) == n:
+        hover_atr = []
+        for i in range(n):
+            d_str = dates[i].strftime('%Y-%m-%d')
+            a_val = atr_arr[i]
+            tag = ""
+            if i == atr_max_idx and atr_max_idx != atr_min_idx:
+                tag = '<br><b style="color:#FFB300;">▲ [ATR Tertinggi (High)]</b>'
+            elif i == atr_min_idx and atr_max_idx != atr_min_idx:
+                tag = '<br><b style="color:#FF6D00;">▼ [ATR Terendah (Low)]</b>'
+            hover_atr.append(f"<b>Tanggal:</b> {d_str}<br><b>ATR:</b> {smart_format(a_val, prefix=curr_prefix)}{tag}")
+
         fig.add_trace(go.Scatter(
             x=dates, y=atr_arr, mode='lines', name='ATR (Volatilitas)',
             line=dict(color='#FFB300', width=2.0),
             hoverinfo='text',
-            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>ATR:</b> {smart_format(a, prefix=curr_prefix)}" for d, a in zip(dates, atr_arr)]
+            hovertext=hover_atr
         ), row=2, col=1, secondary_y=True)
+
+        # High & Low Markers for ATR
+        if atr_max_idx >= 0 and atr_min_idx >= 0 and atr_max_idx != atr_min_idx:
+            fig.add_trace(go.Scatter(
+                x=[dates[atr_max_idx]], y=[atr_arr[atr_max_idx]], mode='markers+text', name='ATR Tertinggi',
+                marker=dict(color='#FFB300', size=8, symbol='triangle-up'),
+                text=[f"▲ ATR High: {smart_format(atr_arr[atr_max_idx], prefix=curr_prefix)}"],
+                textposition="top center", textfont=dict(color='#FFB300', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=2, col=1, secondary_y=True)
+            fig.add_trace(go.Scatter(
+                x=[dates[atr_min_idx]], y=[atr_arr[atr_min_idx]], mode='markers+text', name='ATR Terendah',
+                marker=dict(color='#FF6D00', size=8, symbol='triangle-down'),
+                text=[f"▼ ATR Low: {smart_format(atr_arr[atr_min_idx], prefix=curr_prefix)}"],
+                textposition="bottom center", textfont=dict(color='#FF6D00', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=2, col=1, secondary_y=True)
         
+    # ----------------------------------------------------
     # Row 3: Delta Volume (Bar)
+    # ----------------------------------------------------
     if len(delta_vol) > 0:
-        # Garis nol pemisah untuk Delta Volume
         fig.add_hline(y=0, line_dash="solid", line_color="#E0E0E0", line_width=1, row=3, col=1)
+
+        delta_max_idx = int(np.argmax(delta_vol))
+        delta_min_idx = int(np.argmin(delta_vol))
+
+        hover_delta = []
+        for i in range(len(delta_vol)):
+            d_str = dates[i].strftime('%Y-%m-%d')
+            dv = delta_vol[i]
+            sign = "+" if dv >= 0 else ""
+            tag = ""
+            if i == delta_max_idx and delta_max_idx != delta_min_idx:
+                tag = '<br><b style="color:#00C853;">▲ [Delta Tertinggi (Net Buy Max)]</b>'
+            elif i == delta_min_idx and delta_max_idx != delta_min_idx:
+                tag = '<br><b style="color:#D50000;">▼ [Delta Terendah (Net Sell Max)]</b>'
+            hover_delta.append(f"<b>Tanggal:</b> {d_str}<br><b>Delta:</b> {sign}{dv:,.0f}{tag}")
 
         if n > 200:
             fig.add_trace(go.Scatter(
@@ -1146,8 +1243,25 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             marker_color=delta_cols if delta_cols else '#00C853',
             opacity=1.0,
             hoverinfo='text',
-            hovertext=[f"<b>Tanggal:</b> {d.strftime('%Y-%m-%d')}<br><b>Delta:</b> {('+' if dv >= 0 else '')}{dv:,.0f}" for d, dv in zip(dates, delta_vol)]
+            hovertext=hover_delta
         ), row=3, col=1)
+
+        # High & Low Markers for Delta Volume
+        if delta_max_idx != delta_min_idx:
+            fig.add_trace(go.Scatter(
+                x=[dates[delta_max_idx]], y=[delta_vol[delta_max_idx]], mode='markers+text', name='Delta Tertinggi',
+                marker=dict(color='#00C853', size=8, symbol='triangle-up'),
+                text=[f"▲ Delta High: {('+' if delta_vol[delta_max_idx] >= 0 else '')}{delta_vol[delta_max_idx]:,.0f}"],
+                textposition="top center", textfont=dict(color='#00C853', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=3, col=1)
+            fig.add_trace(go.Scatter(
+                x=[dates[delta_min_idx]], y=[delta_vol[delta_min_idx]], mode='markers+text', name='Delta Terendah',
+                marker=dict(color='#D50000', size=8, symbol='triangle-down'),
+                text=[f"▼ Delta Low: {delta_vol[delta_min_idx]:,.0f}"],
+                textposition="bottom center", textfont=dict(color='#D50000', size=10),
+                hoverinfo='skip', showlegend=False
+            ), row=3, col=1)
         
     fig.update_layout(
         title=dict(text=title, font=dict(size=15, color='#222'), y=0.98, x=0.5, xanchor='center', yanchor='top'),
