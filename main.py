@@ -90,23 +90,33 @@ def ensure_datetime_index(df):
     df = flatten_df_columns(df)
     
     if isinstance(df.index, pd.DatetimeIndex):
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
         df.index.name = 'Date'
         return df
         
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
+        if hasattr(df['Date'].dt, 'tz') and df['Date'].dt.tz is not None:
+            df['Date'] = df['Date'].dt.tz_localize(None)
         df.set_index('Date', inplace=True)
     elif 'Datetime' in df.columns:
         df['Datetime'] = pd.to_datetime(df['Datetime'])
+        if hasattr(df['Datetime'].dt, 'tz') and df['Datetime'].dt.tz is not None:
+            df['Datetime'] = df['Datetime'].dt.tz_localize(None)
         df.set_index('Datetime', inplace=True)
         df.index.name = 'Date'
     elif 'index' in df.columns:
         df['index'] = pd.to_datetime(df['index'])
+        if hasattr(df['index'].dt, 'tz') and df['index'].dt.tz is not None:
+            df['index'] = df['index'].dt.tz_localize(None)
         df.set_index('index', inplace=True)
         df.index.name = 'Date'
     else:
         try:
             df.index = pd.to_datetime(df.index)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
             df.index.name = 'Date'
         except Exception:
             pass
@@ -884,8 +894,12 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
 def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix=""):
     fig = go.Figure()
     today_dt = pd.to_datetime(date.today())
+    if hasattr(today_dt, 'tz') and today_dt.tz is not None:
+        today_dt = today_dt.tz_localize(None)
     
     h_dates = pd.to_datetime(hist_dates)
+    if hasattr(h_dates, 'tz') and h_dates.tz is not None:
+        h_dates = h_dates.tz_localize(None)
     h_prices = extract_1d_array(hist_prices)
     n_h = min(len(h_dates), len(h_prices))
     h_dates = h_dates[:n_h]
@@ -905,7 +919,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     # Hover text untuk Harga Aktual
     hover_actual = []
     for i in range(n_h):
-        d_str = h_dates[i].strftime('%Y-%m-%d')
+        d_str = format_timestamp_for_plot(h_dates[i])
         p_str = smart_format(h_prices[i], prefix=curr_prefix)
         ret_val = h_prices[i] - base_act_pr
         ret_pct = (ret_val / base_act_pr) * 100.0 if base_act_pr > 0 else 0.0
@@ -943,6 +957,8 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     last_test_price = None
     if actual_dates is not None and y_pred is not None and len(actual_dates) > 0:
         a_dates = pd.to_datetime(actual_dates)
+        if hasattr(a_dates, 'tz') and a_dates.tz is not None:
+            a_dates = a_dates.tz_localize(None)
         p_prices = extract_1d_array(y_pred)
         n_a = min(len(a_dates), len(p_prices))
         if n_a > 0:
@@ -954,7 +970,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             
             hover_test = []
             for i in range(n_a):
-                d_str = a_dates[i].strftime('%Y-%m-%d')
+                d_str = format_timestamp_for_plot(a_dates[i])
                 p_str = smart_format(p_prices[i], prefix=curr_prefix)
                 ret_val = p_prices[i] - base_test_pr
                 ret_pct = (ret_val / base_test_pr) * 100.0 if base_test_pr > 0 else 0.0
@@ -980,6 +996,8 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             ))
 
     f_dates = pd.to_datetime(date_range)
+    if hasattr(f_dates, 'tz') and f_dates.tz is not None:
+        f_dates = f_dates.tz_localize(None)
     f_prices = extract_1d_array(forecast)
     n_f = min(len(f_dates), len(f_prices))
     f_dates = f_dates[:n_f]
@@ -1045,7 +1063,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         hover_pred_fc = []
         base_test_ref = last_test_price if (last_test_price is not None and last_test_price > 0) else f_prices[0]
         for i in range(n_f):
-            d_str = f_dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(f_dates[i])
             p_str = smart_format(f_prices[i], prefix=curr_prefix)
             ret_val = f_prices[i] - base_test_ref
             ret_pct = (ret_val / base_test_ref) * 100.0 if base_test_ref > 0 else 0.0
@@ -1114,7 +1132,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         # 3. Hover Unifikasi untuk Proyeksi Tren Aktual
         hover_proj = []
         for i in range(n_f):
-            d_str = f_dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(f_dates[i])
             pr_str = smart_format(proj_prices[i], prefix=curr_prefix)
             ret_val = proj_prices[i] - last_act_pr
             ret_pct = (ret_val / last_act_pr) * 100.0 if last_act_pr > 0 else 0.0
@@ -2666,8 +2684,10 @@ def main(stock, data_source="yfinance", api_key=""):
                     last_date = data.index[-1]
                     
                     if is_cmc:
-                        if "Detik" in forecast_period or "1s" in forecast_period:
-                            step_td = pd.Timedelta(seconds=1)
+                        if len(data) >= 2:
+                            step_td = data.index[-1] - data.index[-2]
+                            if step_td <= pd.Timedelta(0):
+                                step_td = pd.Timedelta(minutes=1)
                         else:
                             step_td = pd.Timedelta(minutes=1)
                         date_range = [last_date + (j + 1) * step_td for j in range(forecast_days)]
