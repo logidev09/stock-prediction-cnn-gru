@@ -1802,24 +1802,48 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             ), row=3, col=1)
         
     # ----------------------------------------------------
-    # Layout & Y-Axes Padding Settings (Fixes all text clipping)
+    # Layout & Y-Axes Padding Settings (Fixes all text & title collision)
     # ----------------------------------------------------
     fig.update_layout(
-        title=dict(text=title, font=dict(size=15, color='#222'), y=0.985, x=0.5, xanchor='center', yanchor='top'),
+        title=dict(
+            text=f"<b>{title}</b>",
+            font=dict(size=16, color='#1A1A1A'),
+            y=0.99,
+            x=0.5,
+            xanchor='center',
+            yanchor='top'
+        ),
         hovermode='x unified',
-        margin=dict(l=60, r=60, t=80, b=50),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        margin=dict(l=60, r=60, t=140, b=55),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.025,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10.5),
+            bgcolor='rgba(255, 255, 255, 0.9)',
+            bordercolor='rgba(0, 0, 0, 0.12)',
+            borderwidth=1
+        ),
         template='plotly_white',
-        height=980,
+        height=1020,
         showlegend=True,
         xaxis_rangeslider_visible=False
     )
     
-    # 1. Padding Row 1 (Candlestick & VPVR)
+    # Adjust subplot titles annotations to prevent overlapping with legend and plot data
+    for idx_a, annot in enumerate(fig.layout.annotations):
+        if idx_a == 0:
+            annot.update(font=dict(size=12, color='#222'), yshift=14)
+        elif idx_a in [1, 2]:
+            annot.update(font=dict(size=12, color='#222'), yshift=8)
+    
+    # 1. Padding Row 1 (Candlestick & VPVR - Tanpa ATR)
     p_min = float(np.min(low_arr))
     p_max = float(np.max(high_arr))
     p_span = (p_max - p_min) if p_max > p_min else (p_max * 0.05 if p_max > 0 else 1.0)
-    fig.update_yaxes(title_text=f"Harga {asset_type}", range=[max(0.0, p_min - p_span * 0.18), p_max + p_span * 0.18], row=1, col=1)
+    fig.update_yaxes(title_text=f"Harga {asset_type}", range=[max(0.0, p_min - p_span * 0.18), p_max + p_span * 0.22], row=1, col=1)
     
     # 2. Padding Row 2 (Volume & ATR)
     if len(vol_arr) > 0 and not np.all(vol_arr == 0):
@@ -2781,42 +2805,84 @@ def main(stock, data_source="yfinance", api_key=""):
             )
 
     # ==========================================
-    # OTOMATISASI PARAMETER BERDASARKAN BANYAK DATA (len(data))
+    # OTOMATISASI PARAMETER BERDASARKAN BANYAK DATA (len(data)) & AKTIVASI
     # ==========================================
     n_data_samples = len(data) if not data.empty else 0
-    is_thousands_data = (n_data_samples >= 1000)
+    
+    if 'conv_act_choice' not in st.session_state:
+        st.session_state.conv_act_choice = 'relu'
 
-    if is_thousands_data:
-        # Ribuan Data (Intraday Menit/Jam CMC atau Multi-Tahun) -> 100 epoch, batch 4, lr 0.0005
-        auto_epoch = 100
-        auto_batch = 4
-        auto_lr = 0.0005
-        auto_conv_filters = 64
-        auto_kernel_size = 3
-        auto_gru_1 = 64
-        auto_gru_2 = 64
-        auto_dropout = 0.2
-        auto_seq_len = 60
-        dataset_category_desc = "Ribuan Data (High-Frequency / Deep Temporal Modeling)"
-    else:
-        # Ratusan Sampel (< 1000 baris) -> 50 epoch, batch 32, lr 0.0010
-        auto_epoch = 50
-        auto_batch = 32
-        auto_lr = 0.0010
+    # 1. Rekomendasi Berdasarkan Jumlah Data Sampel (N)
+    if n_data_samples < 300:
+        # Data Kecil (< 300 baris): Lookback pendek, filter & GRU ramping, epoch rendah untuk cegah overfitting
+        auto_seq_len = 15 if n_data_samples >= 60 else max(5, n_data_samples // 4)
         auto_conv_filters = 32
         auto_kernel_size = 3
         auto_gru_1 = 32
+        auto_gru_2 = 16
+        auto_dropout = 0.15
+        auto_epoch = 35
+        auto_batch = 16
+        base_lr = 0.0010
+        dataset_category_desc = "Data Kecil (<300 baris) - Arsitektur Ramping Anti-Overfitting"
+    elif n_data_samples < 1500:
+        # Data Sedang (300 - 1.500 baris, misal Saham Harian 1-5 Tahun / Intraday Jam):
+        auto_seq_len = 30
+        auto_conv_filters = 48
+        auto_kernel_size = 3
+        auto_gru_1 = 48
         auto_gru_2 = 32
-        auto_dropout = 0.2
-        auto_seq_len = 30 if n_data_samples >= 120 else max(5, n_data_samples // 4)
-        dataset_category_desc = "Ratusan Sampel (Standard Data / Anti-Overfitting)"
+        auto_dropout = 0.20
+        auto_epoch = 50
+        auto_batch = 32
+        base_lr = 0.0010
+        dataset_category_desc = "Data Sedang (300-1.500 baris) - Konfigurasi Optimal Balanced"
+    elif n_data_samples < 4000:
+        # Data Besar (1.500 - 4.000 baris, misal Multi-Tahun atau Intraday Menit/Jam):
+        auto_seq_len = 60
+        auto_conv_filters = 64
+        auto_kernel_size = 3
+        auto_gru_1 = 64
+        auto_gru_2 = 32
+        auto_dropout = 0.20
+        auto_epoch = 70
+        auto_batch = 32
+        base_lr = 0.0008
+        dataset_category_desc = "Data Besar (1.500-4.000 baris) - Deep Temporal Modeling"
+    else:
+        # Data Sangat Besar (>= 4.000 baris, misal CMC High-Frequency 1m/3m/5m):
+        auto_seq_len = 60
+        auto_conv_filters = 64
+        auto_kernel_size = 3
+        auto_gru_1 = 64
+        auto_gru_2 = 48
+        auto_dropout = 0.20
+        auto_epoch = 100
+        auto_batch = 32
+        base_lr = 0.0005
+        dataset_category_desc = "Data Sangat Besar (≥4.000 baris) - High-Frequency Deep Learning"
+
+    # 2. Penyesuaian Otomatis Berdasarkan Fungsi Aktivasi
+    current_act = st.session_state.conv_act_choice
+    if current_act == "tanh":
+        auto_feature_range_idx = 1 # (-1, 1) optimal untuk kurva simetris tanh zero-centered
+        auto_lr = min(base_lr, 0.0008) # Mencegah saturasi gradien pada aktivasi tanh
+        act_explanation = "Fungsi Tanh mendistribusikan output ke rentang [-1, 1], sehingga normalisasi otomatis disetel ke `(-1, 1)` agar input zero-centered dan mencegah vanishing gradient."
+    elif current_act in ["relu", "elu"]:
+        auto_feature_range_idx = 0 # (0, 1) optimal untuk aktivasi non-negatif
+        auto_lr = base_lr
+        act_explanation = f"Fungsi {current_act.upper()} bersifat non-negatif [0, ∞), sehingga normalisasi otomatis disetel ke `(0, 1)` yang selaras dengan nilai harga non-negatif."
+    else: # linear
+        auto_feature_range_idx = 0
+        auto_lr = base_lr
+        act_explanation = "Fungsi Linear mempertahankan skala input secara langsung."
 
     with st.expander("3. Pra-pemrosesan Data"):
 
         is_valid_data = len(data) >= 30 if is_cmc else (days >= 120)
 
         if is_valid_data:
-            st.info(f"⚡ **Penyesuaian Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):** Kategori **{dataset_category_desc}** aktif.", icon=":material/auto_awesome:")
+            st.info(f"⚡ **Penyesuaian Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):** Kategori **{dataset_category_desc}** aktif. {act_explanation}", icon=":material/auto_awesome:")
 
             with st.popover("⚙️ Pengaturan Panjang Sekuens (Lookback)"):
                 all_seq_options = [3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
@@ -2836,10 +2902,15 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.warning('Ket: Sekuens terlalu pendek kehilangan konteks tren, sekuens terlalu panjang menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
 
             with st.popover("⚙️ Pengaturan Normalisasi (MinMaxScaler)"):
-                scaler_option = st.radio("Rentang Normalisasi:", options=["(0, 1)", "(-1, 1)"], index=0)
+                scaler_option = st.radio(
+                    "Rentang Normalisasi:",
+                    options=["(0, 1)", "(-1, 1)"],
+                    index=auto_feature_range_idx,
+                    key=f"scaler_radio_{current_act}_{len(data)}"
+                )
                 feature_range = (0, 1) if scaler_option == "(0, 1)" else (-1, 1)
-                st.info('Rekomendasi Default: **(0, 1)**. Sangat optimal untuk aktivasi ReLU dan harga aset non-negatif.', icon=":material/recommend:")
-                st.warning('Ket: Rentang (-1, 1) dapat digunakan jika menggunakan aktivasi simetris tanh di seluruh model.', icon=":material/tune:")
+                st.info(f'Rekomendasi Otomatis untuk Aktivasi {current_act.upper()}: **{scaler_option}**.', icon=":material/recommend:")
+                st.warning(f'Ket: {act_explanation}', icon=":material/tune:")
 
             with st.popover("⚙️ Pengaturan Pembagian Data (Train/Test Split)"):
                 split_pct = st.select_slider("Persentase Data Pelatihan (%)", options=[50, 60, 70, 75, 80, 85, 90], value=80)
@@ -2911,8 +2982,20 @@ def main(stock, data_source="yfinance", api_key=""):
                     value=auto_kernel_size,
                     key=f"kernel_size_{len(data)}"
                 )
-                conv_activation = st.selectbox("Fungsi Aktivasi Conv1D", options=["relu", "tanh", "elu", "linear"], index=0)
-                st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{auto_conv_filters} filter**, **kernel {auto_kernel_size}**, aktivasi **ReLU**.', icon=":material/recommend:")
+                
+                conv_act_options = ["relu", "tanh", "elu", "linear"]
+                act_idx = conv_act_options.index(st.session_state.conv_act_choice) if st.session_state.conv_act_choice in conv_act_options else 0
+                conv_activation = st.selectbox(
+                    "Fungsi Aktivasi Conv1D", 
+                    options=conv_act_options, 
+                    index=act_idx,
+                    key=f"act_select_{len(data)}"
+                )
+                if conv_activation != st.session_state.conv_act_choice:
+                    st.session_state.conv_act_choice = conv_activation
+                    st.rerun()
+
+                st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{auto_conv_filters} filter**, **kernel {auto_kernel_size}**, aktivasi **{conv_activation.upper()}**.', icon=":material/recommend:")
                 st.warning('Ket: Filter Conv1D mengekstrak fitur spasial & momentum lokal jangka pendek dari sekuens harga.', icon=":material/layers:")
 
             with st.popover("⚙️ Pengaturan Lapisan GRU"):
@@ -3044,12 +3127,12 @@ def main(stock, data_source="yfinance", api_key=""):
                     key=f"lr_slider_{len(data)}"
                 )
 
-                st.info(f"⚡ **Konfigurasi Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):**\n"
+                st.info(f"⚡ **Konfigurasi Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris) & Aktivasi {current_act.upper()}:**\n"
                         f"- Kategori Dataset: **{dataset_category_desc}**\n"
                         f"- Epoch Otomatis: **{auto_epoch} Epoch**\n"
                         f"- Batch Size Otomatis: **{auto_batch}**\n"
                         f"- Learning Rate Otomatis: **{auto_lr:.4f}**", icon=":material/auto_awesome:")
-                st.warning("Ket: Untuk data ratusan sampel (<1000 data), 50 epoch, batch 32, dan lr 0.0010 mencegah overfitting dan mempercepat konvergensi. Untuk ribuan data intraday (>=1000 data), 100 epoch, batch 4, dan lr 0.0005 menangkap dinamika mikro-struktur harga dengan sangat detail.", icon=":material/insights:")
+                st.warning(f"Ket: {act_explanation} Konfigurasi otomatis ini dirancang secara ilmiah untuk menyeimbangkan kecepatan konvergensi dan generalisasi model.", icon=":material/insights:")
 
             # Forecasting Options
             def get_cmc_forecast_options():
