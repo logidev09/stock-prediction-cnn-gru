@@ -134,10 +134,136 @@ def is_crypto_ticker(ticker):
         t_upper in ['BTC-USD', 'ETH-USD', 'BNB-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'DOT-USD', 'SHIB-USD', 'AVAX-USD', 'BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'ADA', 'BNB']
     )
 
+def get_cmc_api_key_from_env_or_secrets():
+    try:
+        from kaggle_secrets import UserSecretsClient
+        user_secrets = UserSecretsClient()
+        sec = user_secrets.get_secret("CMC_API_KEY")
+        if sec:
+            return sec
+    except Exception:
+        pass
+    try:
+        if "CMC_API_KEY" in st.secrets:
+            return st.secrets["CMC_API_KEY"]
+    except Exception:
+        pass
+    import os
+    return os.environ.get("CMC_API_KEY", "")
+
+def format_timestamp_for_plot(dt):
+    try:
+        dt_p = pd.to_datetime(dt)
+        if dt_p.hour != 0 or dt_p.minute != 0 or dt_p.second != 0:
+            return dt_p.strftime('%Y-%m-%d %H:%M:%S')
+        return dt_p.strftime('%Y-%m-%d')
+    except Exception:
+        return str(dt)
+
+def get_time_change_pct(df, delta):
+    if df is None or df.empty or len(df) < 2:
+        return None
+    try:
+        now_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        target_dt = now_dt - delta
+        dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+        sub = df[dates <= target_dt]
+        if not sub.empty:
+            past_val = safe_float(sub['Close'].iloc[-1])
+        else:
+            past_val = safe_float(df['Close'].iloc[0])
+        now_val = safe_float(df['Close'].iloc[-1])
+        if past_val > 0:
+            return ((now_val - past_val) / past_val) * 100.0
+        return 0.0
+    except Exception:
+        return None
+
+def get_time_period_slice(df, delta):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    try:
+        now_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        target_dt = now_dt - delta
+        dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
+        sub = df[dates >= target_dt].copy()
+        if len(sub) >= 2:
+            return sub
+        return df.tail(min(len(df), 30))
+    except Exception:
+        return df
+
+@st.cache_data(ttl=300)
+def fetch_coinmarketcap_data(symbol, api_key="", interval="1m", count=1000):
+    clean_sym = symbol.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    df = pd.DataFrame()
+    
+    # 1. Coba request langsung ke CoinMarketCap API jika API key tersedia
+    if api_key:
+        try:
+            import requests
+            headers = {
+                'X-CMC_PRO_API_KEY': api_key.strip(),
+                'Accept': 'application/json'
+            }
+            url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/historical"
+            params = {
+                'symbol': clean_sym,
+                'interval': interval if interval in ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'] else '1m',
+                'count': min(count, 1000)
+            }
+            resp = requests.get(url, headers=headers, params=params, timeout=8)
+            if resp.status_code == 200:
+                res_data = resp.json()
+                quotes = res_data.get('data', {}).get('quotes', [])
+                if quotes:
+                    rows = []
+                    for q in quotes:
+                        ts = q.get('timestamp')
+                        quote_usd = q.get('quote', {}).get('USD', {})
+                        rows.append({
+                            'Date': pd.to_datetime(ts),
+                            'Open': safe_float(quote_usd.get('open', quote_usd.get('price', 0.0))),
+                            'High': safe_float(quote_usd.get('high', quote_usd.get('price', 0.0))),
+                            'Low': safe_float(quote_usd.get('low', quote_usd.get('price', 0.0))),
+                            'Close': safe_float(quote_usd.get('price', 0.0)),
+                            'Volume': safe_float(quote_usd.get('volume_24h', quote_usd.get('volume', 0.0)))
+                        })
+                    df = pd.DataFrame(rows)
+                    if not df.empty:
+                        df = df.set_index('Date').sort_index()
+        except Exception:
+            pass
+
+    # 2. Fallback intraday live stream
+    if df.empty or len(df) < 30:
+        try:
+            yf_ticker = f"{clean_sym}-USD"
+            yf_interval = interval if interval in ['1m', '5m', '15m', '30m', '1h', '1d'] else '1m'
+            if yf_interval == '1m':
+                yf_period = '7d'
+            elif yf_interval in ['5m', '15m', '30m']:
+                yf_period = '30d'
+            else:
+                yf_period = '60d'
+                
+            df = yf.download(yf_ticker, period=yf_period, interval=yf_interval)
+            if not df.empty:
+                df = ensure_datetime_index(df)
+        except Exception:
+            pass
+
+    if not df.empty:
+        df = ensure_datetime_index(df)
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col not in df.columns:
+                df[col] = df.iloc[:, 0]
+    return df
+
 @st.cache_data(ttl=3600)
 def get_market_cap(ticker, last_close=0.0, last_volume=0.0):
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker if '-USD' in ticker or '.JK' in ticker else f"{ticker}-USD")
         info = t.info or {}
         cap = info.get('marketCap')
         if cap is None or cap == 0:
@@ -204,6 +330,86 @@ def get_period_slice(df, days):
         return sub
     except Exception:
         return df.tail(min(len(df), max(2, min(days, 30))))
+
+def render_coinmarketcap_mini_metrics(quick_df, symbol):
+    if quick_df is None or quick_df.empty or len(quick_df) < 2:
+        return
+        
+    c_now = safe_float(quick_df['Close'].iloc[-1])
+    c_prev = safe_float(quick_df['Close'].iloc[-2])
+    
+    chg_1m = ((c_now - c_prev) / c_prev) * 100.0 if c_prev > 0 else 0.0
+    chg_5m = get_time_change_pct(quick_df, timedelta(minutes=5))
+    chg_30m = get_time_change_pct(quick_df, timedelta(minutes=30))
+    chg_1h = get_time_change_pct(quick_df, timedelta(hours=1))
+    chg_12h = get_time_change_pct(quick_df, timedelta(hours=12))
+    chg_1d = get_time_change_pct(quick_df, timedelta(days=1))
+    chg_1w = get_time_change_pct(quick_df, timedelta(days=7))
+    chg_1mo = get_time_change_pct(quick_df, timedelta(days=30))
+    chg_90d = get_time_change_pct(quick_df, timedelta(days=90))
+    chg_ytd = get_time_change_pct(quick_df, timedelta(days=365))
+    
+    st.markdown(f"**Performa Perubahan Harga {symbol} (CoinMarketCap):**")
+    
+    # Baris 1: Intraday (1m, 5m, 30m, 1H, 12H)
+    r1_cols = st.columns(5)
+    metrics_r1 = [
+        (r1_cols[0], "1 Menit (1m)", chg_1m),
+        (r1_cols[1], "5 Menit (5m)", chg_5m),
+        (r1_cols[2], "30 Menit (30m)", chg_30m),
+        (r1_cols[3], "1 Jam (1H)", chg_1h),
+        (r1_cols[4], "12 Jam (12H)", chg_12h)
+    ]
+    for col, label, val in metrics_r1:
+        with col:
+            if val is not None and not pd.isna(val):
+                color = "#00C853" if val >= 0 else "#D50000"
+                symbol_arrow = "▲" if val >= 0 else "▼"
+                sign = "+" if val > 0 else ""
+                bg_color = "rgba(0, 200, 83, 0.08)" if val >= 0 else "rgba(213, 0, 0, 0.08)"
+                st.markdown(f"""
+                <div style="background-color: {bg_color}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {color}; text-align: center; margin-bottom: 6px;">
+                    <div style="font-size: 11px; color: #555; font-weight: 600;">{label}</div>
+                    <div style="font-size: 14px; font-weight: bold; color: {color}; margin-top: 2px;">{symbol_arrow} {sign}{val:.2f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center; margin-bottom: 6px;">
+                    <div style="font-size: 11px; color: #777; font-weight: 600;">{label}</div>
+                    <div style="font-size: 14px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+    # Baris 2: Horizon Lebih Panjang (1D, 1W, 1M, 90D, YTD)
+    r2_cols = st.columns(5)
+    metrics_r2 = [
+        (r2_cols[0], "1 Hari (1D)", chg_1d),
+        (r2_cols[1], "1 Minggu (1W)", chg_1w),
+        (r2_cols[2], "1 Bulan (1M)", chg_1mo),
+        (r2_cols[3], "90 Hari (90D)", chg_90d),
+        (r2_cols[4], "1 Tahun (YTD)", chg_ytd)
+    ]
+    for col, label, val in metrics_r2:
+        with col:
+            if val is not None and not pd.isna(val):
+                color = "#00C853" if val >= 0 else "#D50000"
+                symbol_arrow = "▲" if val >= 0 else "▼"
+                sign = "+" if val > 0 else ""
+                bg_color = "rgba(0, 200, 83, 0.08)" if val >= 0 else "rgba(213, 0, 0, 0.08)"
+                st.markdown(f"""
+                <div style="background-color: {bg_color}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {color}; text-align: center;">
+                    <div style="font-size: 11px; color: #555; font-weight: 600;">{label}</div>
+                    <div style="font-size: 14px; font-weight: bold; color: {color}; margin-top: 2px;">{symbol_arrow} {sign}{val:.2f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 11px; color: #777; font-weight: 600;">{label}</div>
+                    <div style="font-size: 14px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
+                </div>
+                """, unsafe_allow_html=True)
 
 def extract_1d_array(data):
     if data is None:
@@ -1486,36 +1692,44 @@ def evaluate_model_performance(y_test, y_pred):
         "badge": badge
     }
 
-def main(stock):
+def main(stock, data_source="yfinance", api_key=""):
     if 'current_stock' not in st.session_state:
         st.session_state.current_stock = ""
     if 'training_completed' not in st.session_state:
         st.session_state.training_completed = False
 
-    if st.session_state.current_stock != stock:
+    state_key = f"{stock}_{data_source}"
+    if st.session_state.current_stock != state_key:
         if st.session_state.training_completed:
             st.cache_data.clear()
             st.cache_resource.clear()
             st.session_state.training_completed = False
-        st.session_state.current_stock = stock
+        st.session_state.current_stock = state_key
 
-    asset_type = "Crypto" if is_crypto_ticker(stock) else "Saham"
+    is_cmc = (data_source == "coinmarketcap")
+    clean_sym = stock.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    asset_type = "Crypto" if (is_cmc or is_crypto_ticker(stock)) else "Saham"
 
-    st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
+    if is_cmc:
+        st.header(f"Prediksi Harga {clean_sym} melalui Coinmarketcap (CNN-GRU)")
+    else:
+        st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
 
     # Ringkasan 3 kolom di bawah header
-    curr_prefix = "$ " if (stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
+    curr_prefix = "$ " if (is_cmc or stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
     last_vol = 0.0
     last_pr = 0.0
     try:
-        if crypto_yfinance and is_crypto_ticker(stock):
+        if is_cmc:
+            quick_df = fetch_coinmarketcap_data(clean_sym, api_key=api_key, interval="1m", count=1000)
+        elif crypto_yfinance and is_crypto_ticker(stock):
             quick_df = cyf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
         else:
             quick_df = yf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
         
         if not quick_df.empty:
             quick_df = ensure_datetime_index(quick_df)
-            last_dt = pd.to_datetime(quick_df.index[-1]).strftime('%Y-%m-%d')
+            last_dt = format_timestamp_for_plot(quick_df.index[-1])
             last_pr = safe_float(quick_df['Close'].iloc[-1])
             last_pr_str = smart_format(last_pr, prefix=curr_prefix)
             if 'Volume' in quick_df.columns:
@@ -1532,51 +1746,54 @@ def main(stock):
 
     col_sum1, col_sum2, col_sum3 = st.columns(3)
     with col_sum1:
-        st.metric("Tanggal Terakhir", last_dt)
+        st.metric("Tanggal / Waktu Terakhir", last_dt)
     with col_sum2:
         st.metric("Harga Terakhir", last_pr_str)
     with col_sum3:
         st.metric("Market Cap", mcap_str)
 
-    # Kolom Perubahan Harga 1D, 1W, 1M, 90D, YTD
+    # Mini Trend Metrics: If CMC show 10 metrics (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)
     if not quick_df.empty and len(quick_df) >= 2:
-        c_now = safe_float(quick_df['Close'].iloc[-1])
-        c_prev = safe_float(quick_df['Close'].iloc[-2])
-        chg_1d = ((c_now - c_prev) / c_prev) * 100 if c_prev > 0 else 0.0
-        chg_1w = get_change_pct(quick_df, 7)
-        chg_1m = get_change_pct(quick_df, 30)
-        chg_90d = get_change_pct(quick_df, 90)
-        chg_ytd = get_change_pct(quick_df, 365)
+        if is_cmc:
+            render_coinmarketcap_mini_metrics(quick_df, clean_sym)
+        else:
+            c_now = safe_float(quick_df['Close'].iloc[-1])
+            c_prev = safe_float(quick_df['Close'].iloc[-2])
+            chg_1d = ((c_now - c_prev) / c_prev) * 100 if c_prev > 0 else 0.0
+            chg_1w = get_change_pct(quick_df, 7)
+            chg_1m = get_change_pct(quick_df, 30)
+            chg_90d = get_change_pct(quick_df, 90)
+            chg_ytd = get_change_pct(quick_df, 365)
 
-        st.markdown(f"**Performa Perubahan Harga {stock}:**")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        metrics_list = [
-            (c1, "1 Hari (1D)", chg_1d),
-            (c2, "1 Minggu (1W)", chg_1w),
-            (c3, "1 Bulan (1M)", chg_1m),
-            (c4, "90 Hari (90D)", chg_90d),
-            (c5, "1 Tahun (YTD)", chg_ytd)
-        ]
-        for col, label, val in metrics_list:
-            with col:
-                if val is not None and not pd.isna(val):
-                    color = "#00C853" if val >= 0 else "#D50000"
-                    symbol = "▲" if val >= 0 else "▼"
-                    sign = "+" if val > 0 else ""
-                    bg_color = "rgba(0, 200, 83, 0.08)" if val >= 0 else "rgba(213, 0, 0, 0.08)"
-                    st.markdown(f"""
-                    <div style="background-color: {bg_color}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {color}; text-align: center;">
-                        <div style="font-size: 11px; color: #555; font-weight: 600;">{label}</div>
-                        <div style="font-size: 15px; font-weight: bold; color: {color}; margin-top: 2px;">{symbol} {sign}{val:.2f}%</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style="background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center;">
-                        <div style="font-size: 11px; color: #777; font-weight: 600;">{label}</div>
-                        <div style="font-size: 15px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            st.markdown(f"**Performa Perubahan Harga {stock}:**")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            metrics_list = [
+                (c1, "1 Hari (1D)", chg_1d),
+                (c2, "1 Minggu (1W)", chg_1w),
+                (c3, "1 Bulan (1M)", chg_1m),
+                (c4, "90 Hari (90D)", chg_90d),
+                (c5, "1 Tahun (YTD)", chg_ytd)
+            ]
+            for col, label, val in metrics_list:
+                with col:
+                    if val is not None and not pd.isna(val):
+                        color = "#00C853" if val >= 0 else "#D50000"
+                        symbol = "▲" if val >= 0 else "▼"
+                        sign = "+" if val > 0 else ""
+                        bg_color = "rgba(0, 200, 83, 0.08)" if val >= 0 else "rgba(213, 0, 0, 0.08)"
+                        st.markdown(f"""
+                        <div style="background-color: {bg_color}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {color}; text-align: center;">
+                            <div style="font-size: 11px; color: #555; font-weight: 600;">{label}</div>
+                            <div style="font-size: 15px; font-weight: bold; color: {color}; margin-top: 2px;">{symbol} {sign}{val:.2f}%</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div style="background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 11px; color: #777; font-weight: 600;">{label}</div>
+                            <div style="font-size: 15px; font-weight: bold; color: #999; margin-top: 2px;">-</div>
+                        </div>
+                        """, unsafe_allow_html=True)
     st.write("")
 
     with st.expander("1. Persiapan Lingkungan"):
@@ -1588,18 +1805,18 @@ def main(stock):
             with st.popover("📊 Diagram Alur Kerja (Workflow)"):
                 mermaid_code = """
                 graph TD
-                    A([🚀 Input Kode Saham / Kripto]) --> B{Deteksi Jenis Aset}
-                    B -->|Saham IDX / Global| C1[Scraping Data via yfinance]
-                    B -->|Aset Kripto| C2[Scraping Data via crypto-yfinance / yf]
-                    C1 --> D[Ringkasan Metrik Pasar, Performa & Grafik Mini Sparkline 1D-YTD]
+                    A([🚀 Input Kode Saham / Kripto]) --> B{Deteksi Jenis Aset / Sumber Data}
+                    B -->|yFinance Saham / Crypto| C1[Scraping Data via yfinance]
+                    B -->|CoinMarketCap API| C2[Scraping Intraday via CoinMarketCap Pro API]
+                    C1 --> D[Ringkasan Metrik Pasar, Performa & Grafik Mini Sparkline]
                     C2 --> D
-                    D --> E[2. Pengumpulan Data: Rentang Pelatihan s.d 30 Tahun]
+                    D --> E[2. Pengumpulan Data: Rentang Waktu Historis Pelatihan]
                     E --> F[3. Pra-pemrosesan Data: Normalisasi MinMaxScaler & Windowing Lookback]
                     F --> G[4. Perancangan Model: Conv1D + GRU + Dropout + Dense]
                     G --> H[5. Pelatihan Model: Adam Optimizer & Loss Function MSE]
                     H --> I[6. Evaluasi Model Multi-Metrik: Akurasi, MAPE, RMSE, MAE, R2, MDA]
                     I --> J{Evaluasi Kualitas Model}
-                    J -->|Akurasi Positif & Optimal| K[7. Visualisasi Prediksi Multi-Horizon: 1D - 180D]
+                    J -->|Akurasi Positif & Optimal| K[7. Visualisasi Prediksi Multi-Horizon]
                     J -->|Akurasi Rendah / Negatif| L[Saran Penyesuaian Epoch / Batch / Data]
                     K --> M[8. Interpretasi Tren Pasar & Rekomendasi Investasi]
                     L --> E
@@ -1611,7 +1828,6 @@ def main(stock):
 
     with st.expander("2. Pengumpulan Data"):
 
-        #Menyimpan Data pada Cache
         @st.cache_data
         def load_data(ticker, start_date, end_date):
             try:
@@ -1631,16 +1847,19 @@ def main(stock):
                 return pd.DataFrame()
 
         # DATA HISTORY
-        full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
+        if is_cmc:
+            full_data = quick_df.copy()
+        else:
+            full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
 
         if full_data.empty or len(full_data) == 0:
             st.error(f"❌ Simbol ticker **'{stock}'** tidak ditemukan atau data historis tidak tersedia.", icon=":material/error:")
             st.info("""
             💡 **Panduan Format Input Ticker yang Benar:**
-            - **Aset Kripto**: Tambahkan `-USD` di akhir simbol (contoh: `BTC-USD`, `ETH-USD`, `DOGE-USD`, `DEXE-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`).
-            - **Saham Indonesia (BEI / IDX)**: Tambahkan `.JK` di akhir kode emiten (contoh: `BBCA.JK`, `BBRI.JK`, `TLKM.JK`, `ASII.JK`, `GOTO.JK`).
-            - **Saham Global (Wall Street / US)**: Masukkan kode ticker langsung (contoh: `AAPL`, `NVDA`, `TSLA`, `MSFT`, `AMZN`, `GOOGL`).
-            - **Komoditas / Indeks / Forex**: Contoh: `GC=F` (Emas), `CL=F` (Minyak Mentah), `IDR=X` (USD/IDR), `^JKSE` (IHSG).
+            - **CoinMarketCap**: Masukkan simbol koin langsung (contoh: `BTC`, `ETH`, `DOGE`, `SOL`, `BNB`, `XRP`).
+            - **Aset Kripto (yFinance)**: Tambahkan `-USD` di akhir simbol (contoh: `BTC-USD`, `ETH-USD`, `DOGE-USD`).
+            - **Saham Indonesia (BEI / IDX)**: Tambahkan `.JK` di akhir kode emiten (contoh: `BBCA.JK`, `BMRI.JK`, `TLKM.JK`).
+            - **Saham Global (Wall Street / US)**: Masukkan kode ticker langsung (contoh: `AAPL`, `NVDA`, `TSLA`, `MSFT`).
             """, icon=":material/lightbulb:")
             st.stop()
 
@@ -1662,130 +1881,156 @@ def main(stock):
 
         # Plot Interaktif dengan Plotly untuk data keseluruhan
         fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', '#31333F', curr_prefix=curr_prefix)
-        st.plotly_chart(fig1, use_container_width=True, key="fig_full_data_history")
+        if fig1 is not None:
+            st.plotly_chart(fig1, use_container_width=True, key="fig_full_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
             fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-            st.plotly_chart(fig_full_comp, use_container_width=True, key="fig_full_data_comp_indicators")
+            if fig_full_comp is not None:
+                st.plotly_chart(fig_full_comp, use_container_width=True, key="fig_full_data_comp_indicators")
 
         with st.popover("Tampilkan Semua Data"):
             st.write(format_df_for_display(full_data))
 
         # DATA PELATIHAN
-        # Pilihan untuk input jumlah data pelatihan
         st.subheader("Pengaturan Data Pelatihan")
 
-        use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
-        if use_today_end:
-            end_date_obj = date.today()
+        if is_cmc:
+            st.markdown("Pilih durasi data historis frekuensi tinggi (Intraday) yang digunakan untuk melatih model:")
+            c_sl1, c_sl2 = st.columns(2)
+            with c_sl1:
+                days_ago = st.slider('📅 Hari:', 0, 30, 7, help="Pilihan hari data")
+                hours_ago = st.slider('⏰ Jam (0 - 23):', 0, 23, 12, help="Pilihan jam data tambahan")
+            with c_sl2:
+                mins_ago = st.slider('⏱️ Menit (0 - 59):', 0, 59, 0, help="Pilihan menit data tambahan")
+                secs_ago = st.slider('⏲️ Detik (0 - 59):', 0, 59, 0, help="Pilihan detik data tambahan")
+            
+            total_duration = timedelta(days=days_ago, hours=hours_ago, minutes=mins_ago, seconds=secs_ago)
+            if total_duration.total_seconds() < 1800: # minimal 30 menit
+                total_duration = timedelta(minutes=30)
+                
+            last_ts = full_data.index[-1]
+            start_ts = last_ts - total_duration
+            data = full_data[full_data.index >= start_ts].copy()
+            if len(data) < 30:
+                data = full_data.tail(min(len(full_data), 120)).copy()
+            days = days_ago
+            
+            st.write(f"Rentang Waktu Terpilih: **{days_ago} Hari {hours_ago} Jam {mins_ago} Menit {secs_ago} Detik** ({len(data)} baris data).")
+
         else:
-            end_date_obj = st.date_input(
-                "Tanggal Selesai Pelatihan",
-                value=date.today(),
-                min_value=date(2000, 1, 1),
-                max_value=date.today()
+            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
+            if use_today_end:
+                end_date_obj = date.today()
+            else:
+                end_date_obj = st.date_input(
+                    "Tanggal Selesai Pelatihan",
+                    value=date.today(),
+                    min_value=date(2000, 1, 1),
+                    max_value=date.today()
+                )
+
+            method_options = ["Rentang Tahun / Bulan / Hari", "Gunakan Jumlah Hari Terakhir", "Pilih Tanggal dengan Kalender"]
+            selected_method = st.radio(
+                "Pilihan Metode Memilih Data Pelatihan:",
+                options=method_options,
+                index=0
             )
 
-        method_options = ["Rentang Tahun / Bulan / Hari", "Gunakan Jumlah Hari Terakhir", "Pilih Tanggal dengan Kalender"]
-        selected_method = st.radio(
-            "Pilihan Metode Memilih Data Pelatihan:",
-            options=method_options,
-            index=0
-        )
+            if selected_method == "Rentang Tahun / Bulan / Hari":
+                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 30)
+                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
+                days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 30, 0)
+                
+                days = (years_ago * 365) + (months_ago * 30) + days_ago
+                if days < 120:
+                    days = 120
+                start_date_obj = end_date_obj - timedelta(days=days)
 
-        if selected_method == "Rentang Tahun / Bulan / Hari":
-            years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 30)
-            months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
-            days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 30, 0)
-            
-            days = (years_ago * 365) + (months_ago * 30) + days_ago
-            if days < 120:
-                days = 120
-            start_date_obj = end_date_obj - timedelta(days=days)
+            elif selected_method == "Gunakan Jumlah Hari Terakhir":
+                default_val = 365 * 30
+                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val)
+                start_date_obj = end_date_obj - timedelta(days=days)
 
-        elif selected_method == "Gunakan Jumlah Hari Terakhir":
-            default_val = 365 * 30
-            days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val)
-            start_date_obj = end_date_obj - timedelta(days=days)
+            else: # "Pilih Tanggal dengan Kalender"
+                default_start = end_date_obj - timedelta(days=365*30) # 30 tahun yang lalu
+                
+                start_date_selected = st.date_input(
+                    "Tanggal Mulai Pelatihan",
+                    value=default_start,
+                    min_value=date(1990, 1, 1),
+                    max_value=end_date_obj
+                )
+                
+                start_date_obj = start_date_selected
+                days = (end_date_obj - start_date_obj).days
+                if days < 120:
+                    days = 120
 
-        else: # "Pilih Tanggal dengan Kalender"
-            default_start = end_date_obj - timedelta(days=365*30) # 30 tahun yang lalu
-            
-            start_date_selected = st.date_input(
-                "Tanggal Mulai Pelatihan",
-                value=default_start,
-                min_value=date(1990, 1, 1),
-                max_value=end_date_obj
-            )
-            
-            start_date_obj = start_date_selected
-            days = (end_date_obj - start_date_obj).days
-            if days < 120:
-                days = 120
+            with st.popover("Tips Memilih Data Pelatihan"):
+                st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
+                st.warning('Ket: Secara Default menggunakan 30 Tahun yang lalu (atau data historis maksimal yang tersedia).', icon=":material/pan_tool_alt:")
+                st.warning('Ket: Jika menggunakan Kalender, secara default tanggal mulai diset ke 30 Tahun yang lalu dan tanggal selesai diset ke tanggal terbaru.', icon=":material/calendar_month:")
+                st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
 
-        with st.popover("Tips Memilih Data Pelatihan"):
-            st.info('Ket: Semakin lama hari yang dipilih, maka jumlah hari Prediksi dapat dilakukan dengan lebih banyak, namun prediksi menjadi lebih tidak akurat.', icon=":material/notes:")
-            st.warning('Ket: Secara Default menggunakan 30 Tahun yang lalu (atau data historis maksimal yang tersedia).', icon=":material/pan_tool_alt:")
-            st.warning('Ket: Jika menggunakan Kalender, secara default tanggal mulai diset ke 30 Tahun yang lalu dan tanggal selesai diset ke tanggal terbaru.', icon=":material/calendar_month:")
-            st.warning('Ket: Jumlah Minimal 4 Bulan atau 120 hari yang lalu, yang hanya dapat melakukan prediksi hingga 3 hari kedepan, Perhatikanlah pada bagian Pra-pemrosesan data "Ukuran data pengujian" jumlahnya sebanding dengan jumlah hari yang dapat anda lakukan untuk prediksi kedepan.', icon=":material/exclamation:")
+            # Mengubah Format Tanggal data Pelatihan
+            start_date = start_date_obj.strftime("%Y-%m-%d")
+            end_date = end_date_obj.strftime("%Y-%m-%d")
 
-        # Mengubah Format Tanggal data Pelatihan
-        start_date = start_date_obj.strftime("%Y-%m-%d")
-        end_date = end_date_obj.strftime("%Y-%m-%d")
+            @st.cache_data
+            def load_training_data(stock, start_date, end_date):
+                return load_data(stock, start_date, end_date)
 
-        # Load data sesuai dengan rentang yang dipilih
-        @st.cache_data
-        def load_training_data(stock, start_date, end_date):
-            return load_data(stock, start_date, end_date)
+            try:
+                data = load_training_data(stock, start_date, end_date).copy()
+            except Exception as e:
+                data = load_training_data(stock, start_date, end_date).copy()
 
-        # Fitur Beta
-        try:
-            data = load_training_data(stock, start_date, end_date).copy()
-        except Exception as e:
-            print(f"Error loading data for {stock}: {e}")
-            data = load_training_data(stock, start_date, end_date).copy()
-
-        if not data.empty:
-            actual_days = (data.index[-1] - data.index[0]).days
-            y_cnt = actual_days // 365
-            rem_days = actual_days % 365
-            m_cnt = rem_days // 30
-            d_cnt = rem_days % 30
-            duration_str = f"{y_cnt} Tahun {m_cnt} Bulan {d_cnt} Hari"
-        else:
-            actual_days = 0
-            duration_str = "0 Tahun 0 Bulan 0 Hari"
-
-        st.subheader("Data Pelatihan yang telah dipilih")
-        st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
-
-        # Toggle Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta (1D, 1W, 1M, 90D, YTD)
-        with st.expander("📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)", expanded=False):
             if not data.empty:
-                slice_1d = get_period_slice(data, 1)
-                slice_1w = get_period_slice(data, 7)
-                slice_1m = get_period_slice(data, 30)
-                slice_90d = get_period_slice(data, 90)
-                slice_ytd = get_period_slice(data, 365)
-                
-                chg_1d_s = get_change_pct(data, 1)
-                chg_1w_s = get_change_pct(data, 7)
-                chg_1m_s = get_change_pct(data, 30)
-                chg_90d_s = get_change_pct(data, 90)
-                chg_ytd_s = get_change_pct(data, 365)
-                
-                period_slices = [
-                    ("1 Hari (1D)", slice_1d, chg_1d_s),
-                    ("1 Minggu (1W)", slice_1w, chg_1w_s),
-                    ("1 Bulan (1M)", slice_1m, chg_1m_s),
-                    ("90 Hari (90D)", slice_90d, chg_90d_s),
-                    ("1 Tahun (YTD)", slice_ytd, chg_ytd_s)
-                ]
+                actual_days = (data.index[-1] - data.index[0]).days
+                y_cnt = actual_days // 365
+                rem_days = actual_days % 365
+                m_cnt = rem_days // 30
+                d_cnt = rem_days % 30
+                duration_str = f"{y_cnt} Tahun {m_cnt} Bulan {d_cnt} Hari"
+            else:
+                actual_days = 0
+                duration_str = "0 Tahun 0 Bulan 0 Hari"
+
+            st.subheader("Data Pelatihan yang telah dipilih")
+            st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
+
+        # Toggle Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta
+        expander_title = "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
+        with st.expander(expander_title, expanded=False):
+            if not data.empty:
+                if is_cmc:
+                    period_slices = [
+                        ("1m", get_time_period_slice(data, timedelta(minutes=1)), get_time_change_pct(data, timedelta(minutes=1))),
+                        ("5m", get_time_period_slice(data, timedelta(minutes=5)), get_time_change_pct(data, timedelta(minutes=5))),
+                        ("30m", get_time_period_slice(data, timedelta(minutes=30)), get_time_change_pct(data, timedelta(minutes=30))),
+                        ("1H", get_time_period_slice(data, timedelta(hours=1)), get_time_change_pct(data, timedelta(hours=1))),
+                        ("12H", get_time_period_slice(data, timedelta(hours=12)), get_time_change_pct(data, timedelta(hours=12))),
+                        ("1D", get_time_period_slice(data, timedelta(days=1)), get_time_change_pct(data, timedelta(days=1))),
+                        ("1W", get_time_period_slice(data, timedelta(days=7)), get_time_change_pct(data, timedelta(days=7))),
+                        ("1M", get_time_period_slice(data, timedelta(days=30)), get_time_change_pct(data, timedelta(days=30))),
+                        ("90D", get_time_period_slice(data, timedelta(days=90)), get_time_change_pct(data, timedelta(days=90))),
+                        ("YTD", get_time_period_slice(data, timedelta(days=365)), get_time_change_pct(data, timedelta(days=365)))
+                    ]
+                else:
+                    period_slices = [
+                        ("1 Hari (1D)", get_period_slice(data, 1), get_change_pct(data, 1)),
+                        ("1 Minggu (1W)", get_period_slice(data, 7), get_change_pct(data, 7)),
+                        ("1 Bulan (1M)", get_period_slice(data, 30), get_change_pct(data, 30)),
+                        ("90 Hari (90D)", get_period_slice(data, 90), get_change_pct(data, 90)),
+                        ("1 Tahun (YTD)", get_period_slice(data, 365), get_change_pct(data, 365))
+                    ]
                 
                 # 1. Baris Chart Harga & VWAP Disatukan
                 st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} & VWAP (Garis Hijau/Merah: Close, Garis Biru Putus-putus: VWAP):**")
-                cols_price = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_price, period_slices):
+                cols_price = st.columns(min(len(period_slices), 5))
+                for idx, (label, s_df, chg) in enumerate(period_slices):
+                    col = cols_price[idx % 5]
                     with col:
                         c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
                         mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
@@ -1806,8 +2051,9 @@ def main(stock):
                             
                 # 2. Baris Chart Volume Transaksi Disatukan dengan Garis ATR (Kuning)
                 st.markdown(f"**2. Grafik Mini Volume Transaksi & ATR (Bar Hijau/Merah: Volume, Garis Kuning: ATR Volatilitas):**")
-                cols_vol_atr = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_vol_atr, period_slices):
+                cols_vol_atr = st.columns(min(len(period_slices), 5))
+                for idx, (label, s_df, chg) in enumerate(period_slices):
+                    col = cols_vol_atr[idx % 5]
                     with col:
                         vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
                         if len(vol_arr) >= 2 and vol_arr[0] > 0:
@@ -1817,11 +2063,7 @@ def main(stock):
                             v_badge = "-"
                         
                         atr_arr = calculate_atr_series(s_df)
-                        if len(atr_arr) > 0:
-                            latest_atr = atr_arr[-1]
-                            latest_atr_str = smart_format(latest_atr, prefix=curr_prefix)
-                        else:
-                            latest_atr_str = "-"
+                        latest_atr_str = smart_format(atr_arr[-1], prefix=curr_prefix) if len(atr_arr) > 0 else "-"
                         
                         st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
                         if not s_df.empty and 'Volume' in s_df.columns:
@@ -1833,9 +2075,10 @@ def main(stock):
                             st.write("-")
 
                 # 3. Baris Chart Delta Volume Harian (Bar Hijau Net Buy & Merah Net Sell)
-                st.markdown(f"**3. Grafik Mini Delta Volume Harian (Bar Hijau: Net Buy, Bar Merah: Net Sell):**")
-                cols_delta = st.columns(5)
-                for col, (label, s_df, chg) in zip(cols_delta, period_slices):
+                st.markdown(f"**3. Grafik Mini Delta Volume (Bar Hijau: Net Buy, Bar Merah: Net Sell):**")
+                cols_delta = st.columns(min(len(period_slices), 5))
+                for idx, (label, s_df, chg) in enumerate(period_slices):
+                    col = cols_delta[idx % 5]
                     with col:
                         daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
                         if len(daily_delta) > 0:
@@ -1852,49 +2095,36 @@ def main(stock):
                             plt.close(fig)
                         else:
                             st.write("-")
-            else:
-                st.info("Data riwayat belum tersedia untuk menampilkan grafik mini sparkline.")
-
-        st.write("Mulai")
-        st.write(format_df_for_display(data.head(1)))
-        st.write("Hingga")
-        st.write(format_df_for_display(data.tail(1)))
-
-        if not data.empty and len(data) >= 2:
-            c_start_tr = safe_float(data['Close'].iloc[0])
-            c_end_tr = safe_float(data['Close'].iloc[-1])
-            tr_chg = ((c_end_tr - c_start_tr) / c_start_tr) * 100.0 if c_start_tr > 0 else 0.0
-            tr_sign = f":green[▲ +{tr_chg:,.2f}%]" if tr_chg >= 0 else f":red[▼ {tr_chg:,.2f}%]"
-            tr_diff = c_end_tr - c_start_tr
-            diff_tr_sign = "+" if tr_diff >= 0 else ""
-            tr_diff_str = smart_format(tr_diff, prefix=curr_prefix)
-            st.markdown(f"**Performa Perubahan Periode Pelatihan ({duration_str}):** {tr_sign} (`{diff_tr_sign}{tr_diff_str}`)")
-
-        # Plot Interaktif dengan Plotly untuk data pelatihan
-        fig2 = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#d6c36b', curr_prefix=curr_prefix)
-        st.plotly_chart(fig2, use_container_width=True, key="fig_train_data_history")
-
-        with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Periode Pelatihan)", expanded=False):
-            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif (Periode Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-            st.plotly_chart(fig_train_comp, use_container_width=True, key="fig_train_data_comp_indicators")
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
             st.write(format_df_for_display(data))
 
     with st.expander("3. Pra-pemrosesan Data"):
 
-        if days >= 120:
+        is_valid_data = len(data) >= 30 if is_cmc else (days >= 120)
+
+        if is_valid_data:
 
             with st.popover("⚙️ Pengaturan Panjang Sekuens (Lookback)"):
-                seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
-                max_seq = max(5, min(180, len(data) // 3))
-                valid_seq_options = [s for s in seq_options if s <= max_seq]
-                if not valid_seq_options:
-                    valid_seq_options = [30]
-                default_seq = 60 if 60 in valid_seq_options else valid_seq_options[-1]
-                seq_length = st.select_slider("Panjang Sekuens (Hari)", options=valid_seq_options, value=default_seq)
-                st.info('Rekomendasi Default: **60 Hari** (~3 Bulan bursa). Rentang Paling Akurat: **30–60 Hari**.', icon=":material/recommend:")
-                st.warning('Ket: Sekuens terlalu pendek (<15) kehilangan konteks tren, sekuens terlalu panjang (>120) menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
+                if is_cmc:
+                    seq_options = [5, 10, 15, 20, 30, 45, 60]
+                    max_seq = max(5, min(60, len(data) // 3))
+                    valid_seq_options = [s for s in seq_options if s <= max_seq]
+                    if not valid_seq_options:
+                        valid_seq_options = [15]
+                    default_seq = 15 if 15 in valid_seq_options else valid_seq_options[-1]
+                    seq_length = st.select_slider("Panjang Sekuens (Lookback Window) [Menit/Langkah]", options=valid_seq_options, value=default_seq)
+                    st.info('Rekomendasi Default: **15 Langkah Data** (Rentang Akurat: **10–30 Langkah**).', icon=":material/recommend:")
+                else:
+                    seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+                    max_seq = max(5, min(180, len(data) // 3))
+                    valid_seq_options = [s for s in seq_options if s <= max_seq]
+                    if not valid_seq_options:
+                        valid_seq_options = [30]
+                    default_seq = 60 if 60 in valid_seq_options else valid_seq_options[-1]
+                    seq_length = st.select_slider("Panjang Sekuens (Hari)", options=valid_seq_options, value=default_seq)
+                    st.info('Rekomendasi Default: **60 Hari** (~3 Bulan bursa). Rentang Paling Akurat: **30–60 Hari**.', icon=":material/recommend:")
+                st.warning('Ket: Sekuens terlalu pendek kehilangan konteks tren, sekuens terlalu panjang menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
 
             with st.popover("⚙️ Pengaturan Normalisasi (MinMaxScaler)"):
                 scaler_option = st.radio("Rentang Normalisasi:", options=["(0, 1)", "(-1, 1)"], index=0)
@@ -1930,13 +2160,12 @@ def main(stock):
 
             x_train, x_test, y_train, y_test, scaler = preprocess_data(data, seq_length, feature_range, train_ratio)
 
-            # Menghitung persentase data pelatihan dan pengujian
             total_samples = x_train.shape[0] + x_test.shape[0]
-            train_percentage = (x_train.shape[0] / total_samples) * 100
-            test_percentage = (x_test.shape[0] / total_samples) * 100
+            train_percentage = (x_train.shape[0] / total_samples) * 100 if total_samples > 0 else 0
+            test_percentage = (x_test.shape[0] / total_samples) * 100 if total_samples > 0 else 0
 
             with st.popover("Detail Pra-pemrosesan Data"):
-                st.info(f'Ukuran Panjang Sekuens (`seq_length`): Menggunakan **{seq_length}** hari historis untuk memprediksi harga saham pada hari berikutnya.', icon=":material/timeline:")
+                st.info(f'Ukuran Panjang Sekuens (`seq_length`): Menggunakan **{seq_length}** langkah historis untuk memprediksi harga pada langkah berikutnya.', icon=":material/timeline:")
                 st.warning(f'Pembagian Data: Data di-scaling dengan `MinMaxScaler{feature_range}` lalu dibagi menjadi **{train_percentage:.1f}%** data pelatihan ({x_train.shape[0]} sampel) dan **{test_percentage:.1f}%** data pengujian ({x_test.shape[0]} sampel).', icon=":material/pie_chart:")
 
             col1, col2 = st.columns(2)
@@ -1949,11 +2178,14 @@ def main(stock):
 
             st.success("Pra-pemrosesan Data selesai!")
         else:
-            st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
+            if is_cmc:
+                st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
+            else:
+                st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
 
     with st.expander("4. Perancangan Model CNN-GRU"):
 
-        if days >= 120:
+        if is_valid_data:
 
             st.subheader("Arsitektur Model & Pengaturan Hyperparameter:")
 
@@ -1995,7 +2227,6 @@ def main(stock):
                 model.compile(optimizer=Adam(learning_rate=lr), loss='mse')
                 return model
 
-            # Buat model untuk inspeksi parameter sebelum pelatihan
             preview_model = create_model(seq_length, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
             try:
                 total_params = preview_model.count_params()
@@ -2009,7 +2240,7 @@ def main(stock):
                 st.metric("Jumlah Lapisan (Layers)", f"{len(preview_model.layers)} Lapisan")
 
             with st.popover("Detail Arsitektur & Ringkasan Parameter"):
-                st.info(f'Lapisan Ekstraksi Fitur: `Conv1D` ({conv_filters} filter, kernel {kernel_size}, aktivasi {conv_activation}) untuk mengekstrak pola fitur spasial dari sekuens {seq_length} hari.', icon=":material/layers:")
+                st.info(f'Lapisan Ekstraksi Fitur: `Conv1D` ({conv_filters} filter, kernel {kernel_size}, aktivasi {conv_activation}) untuk mengekstrak pola fitur spasial dari sekuens {seq_length} langkah.', icon=":material/layers:")
                 st.warning(f'Lapisan Memori & Regulasi: `GRU` ({gru_units_1} unit, seq) $\\rightarrow$ `Dropout` ({dropout_rate}) $\\rightarrow$ `GRU` ({gru_units_2} unit) untuk menangkap pola temporal sekuensial.', icon=":material/memory:")
                 st.warning('Lapisan Output & Kompilasi: Lapisan `Dense(1)` dikompilasi dengan optimizer `Adam` dan loss function `MSE`.', icon=":material/check_circle:")
                 
@@ -2043,113 +2274,135 @@ def main(stock):
             st.success("Perancangan Model CNN-GRU selesai!")
 
         else:
-            st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
+            if is_cmc:
+                st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
+            else:
+                st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
 
     with st.expander("5. Pelatihan Model", True):
 
-        # Menambahkan nilai default untuk ketika tombol belum ditekan
+        if 'btn_check' not in st.session_state:
+            st.session_state.btn_check = 0
+
         btn_check = 0
 
-        if days >= 120:
+        if is_valid_data:
 
-            with st.popover("⚙️ Pengaturan Jumlah Epoch"):
-                epoch_options = [1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 120, 150, 200, 300, 500]
-                epochs = st.select_slider("Jumlah Epoch", options=epoch_options, value=50)
-                st.info('Rekomendasi Default: **50 Epoch** (Rentang Paling Akurat: **40–100 Epoch**).', icon=":material/recommend:")
-                st.warning('Ket: Semakin banyak Jumlahnya (>150), maka waktu komputasi semakin lambat dan berisiko overfitting pada noise pasar.', icon=":material/timer_3_alt_1:")
-                st.info('Ket: Semakin sedikit Jumlahnya (<20), maka komputasi sangat cepat namun berisiko underfitting (bobot GRU belum konvergen).', icon=":material/speed:")
+            # Hyperparameter Tuning popover
+            with st.popover("⚙️ Pengaturan Epoch, Batch & Learning Rate"):
+                is_crypto = is_cmc or is_crypto_ticker(stock)
+                
+                if is_crypto:
+                    default_epoch = 100
+                    default_batch = 4
+                    default_lr = 0.0005
+                    acc_epoch_desc = "30–120 (Optimal Crypto: 80–120)"
+                    acc_batch_desc = "4–16 (Optimal Crypto: 4–8)"
+                    acc_lr_desc = "0.0001–0.001 (Optimal Crypto: 0.0003–0.0008)"
+                else:
+                    default_epoch = 50
+                    default_batch = 16
+                    default_lr = 0.001
+                    acc_epoch_desc = "30–100 (Optimal Saham: 40–60)"
+                    acc_batch_desc = "8–32 (Optimal Saham: 16–32)"
+                    acc_lr_desc = "0.0005–0.002 (Optimal Saham: 0.001)"
 
-            with st.popover("⚙️ Pengaturan Ukuran Batch"):
-                batch_size_options = [2, 4, 8, 16, 32, 64, 128, 256, 512]
-                batch_size = st.select_slider("Ukuran Batch", options=batch_size_options, value=32)
-                st.info('Rekomendasi Default: **32** (Rentang Paling Akurat: **16–32** untuk Time Series CNN-GRU).', icon=":material/recommend:")
-                st.warning('Ket: Ukuran kecil (4–16) memberikan regularisasi stokastik lebih baik namun komputasi relatif lebih lambat.', icon=":material/tune:")
-                st.info('Ket: Ukuran besar (128–512) mempercepat komputasi GPU/CPU namun rentan mengalami generalization gap pada data deret waktu.', icon=":material/bolt:")
+                epochs = st.slider("Jumlah Epoch:", min_value=10, max_value=200, value=default_epoch, step=5)
+                batch_size = st.select_slider("Ukuran Batch (Batch Size):", options=[1, 2, 4, 8, 16, 32, 64, 128], value=default_batch)
+                
+                lr_options = [0.0001, 0.0003, 0.0005, 0.0008, 0.001, 0.002, 0.003, 0.005, 0.01]
+                lr_index = lr_options.index(default_lr) if default_lr in lr_options else 4
+                learning_rate = st.select_slider("Learning Rate (Adam Optimizer):", options=lr_options, value=lr_options[lr_index], format_func=lambda x: f"{x:.4f}")
 
-            with st.popover("⚙️ Pengaturan Learning Rate (Adam Optimizer)"):
-                lr_options = [0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01]
-                learning_rate = st.select_slider(
-                    "Tingkat Pembelajaran (Learning Rate)",
-                    options=lr_options,
-                    value=0.001,
-                    format_func=lambda x: f"{x:.4f}"
-                )
-                st.info('Rekomendasi Default: **0.0010** (Rentang Paling Akurat: **0.0005–0.0010**).', icon=":material/recommend:")
-                st.warning('Ket: Learning rate terlalu besar (>0.005) menyebabkan loss berosilasi atau tidak stabil. Terlalu kecil (<0.0005) membutuhkan epoch lebih banyak untuk konvergen.', icon=":material/tune:")
+                st.info(f"**Rekomendasi Parameter Optimal ({asset_type}):**\n"
+                        f"- Epoch Default: **{default_epoch}** (Rentang Akurat: **{acc_epoch_desc}**)\n"
+                        f"- Batch Size Default: **{default_batch}** (Rentang Akurat: **{acc_batch_desc}**)\n"
+                        f"- Learning Rate Default: **{default_lr}** (Rentang Akurat: **{acc_lr_desc}**)", icon=":material/recommend:")
+                st.warning("Ket: Batch size kecil (4-8) sangat efektif untuk menangkap volatilitas kripto, sedangkan batch moderat (16-32) lebih stabil untuk saham konvensional.", icon=":material/insights:")
 
-            # Define the time periods and their corresponding days
-            def get_forecast_options(stock):
-                forecast_options = [
-                    ("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6),
-                    ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60),
-                    ("3 Bulan", 90), ("4 Bulan", 120), ("5 Bulan", 150), ("6 Bulan", 180), ("7 Bulan", 210),
-                    ("8 Bulan", 240), ("9 Bulan", 270), ("10 Bulan", 300), ("11 Bulan", 330), ("1 Tahun", 365),
-                    ("2 Tahun", 730)
+            # Forecasting Options
+            if is_cmc:
+                cmc_forecast_options_list = [
+                    ("1 Detik (1s)", 1),
+                    ("1 Menit (1m)", 1),
+                    ("3 Menit (3m)", 3),
+                    ("5 Menit (5m)", 5),
+                    ("15 Menit (15m)", 15),
+                    ("30 Menit (30m)", 30),
+                    ("1 Jam (1h)", 60),
+                    ("2 Jam (2h)", 120),
+                    ("4 Jam (4h)", 240),
+                    ("6 Jam (6h)", 360),
+                    ("8 Jam (8h)", 480),
+                    ("12 Jam (12h)", 720)
                 ]
-                return forecast_options
+                forecast_options_dict = {name: steps for name, steps in cmc_forecast_options_list if steps <= len(x_test)}
+                if not forecast_options_dict:
+                    forecast_options_dict = {"1 Menit (1m)": 1, "5 Menit (5m)": 5}
+                default_cmc_options = [opt for opt in ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)"] if opt in forecast_options_dict]
+                if not default_cmc_options:
+                    default_cmc_options = list(forecast_options_dict.keys())[:3]
+                default_options = default_cmc_options
+            else:
+                def get_forecast_options(stock):
+                    return [
+                        ("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6),
+                        ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60),
+                        ("3 Bulan", 90), ("4 Bulan", 120), ("5 Bulan", 150), ("6 Bulan", 180), ("7 Bulan", 210),
+                        ("8 Bulan", 240), ("9 Bulan", 270), ("10 Bulan", 300), ("11 Bulan", 330), ("1 Tahun", 365),
+                        ("2 Tahun", 730)
+                    ]
 
-            # Define the default options for each time period
-            default_options_map = {
-                3: ["1 Hari", "2 Hari", "3 Hari"],
-                4: ["2 Hari", "3 Hari", "4 Hari"],
-                5: ["3 Hari", "4 Hari", "5 Hari"],
-                6: ["4 Hari", "5 Hari", "6 Hari"],
-                7: ["5 Hari", "6 Hari", "1 Minggu"],
-                14: ["6 Hari", "1 Minggu", "2 Minggu"],
-                21: ["1 Minggu", "2 Minggu", "3 Minggu"],
-                30: ["1 Minggu", "2 Minggu", "1 Bulan"],
-                60: ["1 Minggu", "1 Bulan", "2 Bulan"],
-                90: ["1 Minggu", "1 Bulan", "3 Bulan"],
-                120: ["1 Minggu", "1 Bulan", "3 Bulan", "4 Bulan"],
-                150: ["1 Minggu", "1 Bulan", "3 Bulan", "5 Bulan"],
-                180: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"],
-                210: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "7 Bulan"],
-                240: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "8 Bulan"],
-                270: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "9 Bulan"],
-                300: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "10 Bulan"],
-                330: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "11 Bulan"],
-                365: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun"],
-                730: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun", "2 Tahun"]
-            }
+                default_options_map = {
+                    3: ["1 Hari", "2 Hari", "3 Hari"],
+                    4: ["2 Hari", "3 Hari", "4 Hari"],
+                    5: ["3 Hari", "4 Hari", "5 Hari"],
+                    6: ["4 Hari", "5 Hari", "6 Hari"],
+                    7: ["5 Hari", "6 Hari", "1 Minggu"],
+                    14: ["6 Hari", "1 Minggu", "2 Minggu"],
+                    21: ["1 Minggu", "2 Minggu", "3 Minggu"],
+                    30: ["1 Minggu", "2 Minggu", "1 Bulan"],
+                    60: ["1 Minggu", "1 Bulan", "2 Bulan"],
+                    90: ["1 Minggu", "1 Bulan", "3 Bulan"],
+                    120: ["1 Minggu", "1 Bulan", "3 Bulan", "4 Bulan"],
+                    150: ["1 Minggu", "1 Bulan", "3 Bulan", "5 Bulan"],
+                    180: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"],
+                    210: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "7 Bulan"],
+                    240: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "8 Bulan"],
+                    270: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "9 Bulan"],
+                    300: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "10 Bulan"],
+                    330: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "11 Bulan"],
+                    365: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun"],
+                    730: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun", "2 Tahun"]
+                }
 
-            def initialize_forecast_options(stock, x_test):
-                forecast_options = get_forecast_options(stock)
-                forecast_options_dict = {name: days for name, days in forecast_options}
-                forecast_days = x_test.shape[0]
+                def initialize_forecast_options(stock, x_test):
+                    f_opts = get_forecast_options(stock)
+                    f_dict = {name: d for name, d in f_opts}
+                    f_days = x_test.shape[0]
+                    valid_opts = {name: d for name, d in f_dict.items() if d <= f_days}
+                    if not valid_opts:
+                        max_d = max(d for d in f_dict.values() if d <= f_days)
+                        valid_opts = {name: d for name, d in f_dict.items() if d == max_d}
+                    closest_key = min(default_options_map.keys(), key=lambda x: abs(x - f_days))
+                    def_opts = default_options_map[closest_key]
+                    def_opts = [o for o in def_opts if o in valid_opts]
+                    return valid_opts, def_opts
 
-                # Filter opsi forecast yang tidak melebihi jumlah hari dalam x_test
-                valid_forecast_options = {name: days for name, days in forecast_options_dict.items() if days <= forecast_days}
+                forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
 
-                # Jika tidak ada opsi yang valid, gunakan opsi terpanjang yang tersedia
-                if not valid_forecast_options:
-                    max_valid_days = max(days for days in forecast_options_dict.values() if days <= forecast_days)
-                    valid_forecast_options = {name: days for name, days in forecast_options_dict.items() if days == max_valid_days}
-
-                # Pilih opsi default berdasarkan kecocokan terdekat dengan forecast_days
-                closest_key = min(default_options_map.keys(), key=lambda x: abs(x - forecast_days))
-                default_options = default_options_map[closest_key]
-
-                # Pastikan semua opsi default valid untuk stok saat ini dan tidak melebihi forecast_days
-                default_options = [option for option in default_options if option in valid_forecast_options]
-
-                return valid_forecast_options, default_options
-
-            # Penggunaan fungsi
-            forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
-
-            # Inisialisasi session state untuk periode terpilih jika belum ada atau berganti aset
-            fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}"
+            fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}_{data_source}"
             if fc_key not in st.session_state:
                 st.session_state[fc_key] = default_options
 
             st.write("**Pilihan Periode Forecasting:**")
             col_b1, col_b2, col_b3 = st.columns([1.2, 1.2, 1.2])
             with col_b1:
-                if st.button("🔄 Pilih Default", help="Kembalikan ke pilihan periode default yang optimal sesuai data"):
+                if st.button("🔄 Pilih Default", help="Kembalikan ke pilihan periode default"):
                     st.session_state[fc_key] = default_options
                     st.rerun()
             with col_b2:
-                if st.button("✅ Pilih Semua", help="Pilih semua horizon periode yang tersedia"):
+                if st.button("✅ Pilih Semua", help="Pilih semua periode yang tersedia"):
                     st.session_state[fc_key] = list(forecast_options_dict.keys())
                     st.rerun()
             with col_b3:
@@ -2163,14 +2416,7 @@ def main(stock):
                 key=fc_key
             )
 
-            # DATA PELATIHAN
-            end_date = date.today()
-
-            # Pastikan end_date adalah objek datetime
-            if isinstance(end_date, str):
-                end_date = date.strptime(end_date, "%Y-%m-%d")
-
-            # Cache the training function
+            # Training function
             def train_model(x_train, y_train, epochs, batch_size, lr_val, _on_epoch_end):
                 with st.spinner('Sedang Melatih model... Harap tunggu.'):
                     try:
@@ -2186,7 +2432,6 @@ def main(stock):
                         return model, history
                     except Exception as e:
                         st.error(f"Terjadi error saat melatih model: {str(e)}")
-                        st.error('Silakan coba lagi dengan parameter yang berbeda.', icon=":material/pan_tool_alt:")
                         return None, None
 
             if st.button("Latih Model", type="primary"):
@@ -2198,106 +2443,101 @@ def main(stock):
                 def on_epoch_end(epoch, logs):
                     progress = (epoch + 1) / epochs
                     progress_bar.progress(progress)
-                    status_text.text(f"Epoch {epoch + 1}/{epochs}")
-
                     elapsed_time = time.time() - start_time
-                    estimated_total_time = elapsed_time / progress
+                    estimated_total_time = elapsed_time / progress if progress > 0 else 0
                     remaining_time = estimated_total_time - elapsed_time
+                    status_text.text(f"Epoch {epoch + 1}/{epochs} - Loss: {logs.get('loss', 0):.4f}")
                     time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
 
                 model, history = train_model(x_train, y_train, epochs, batch_size, learning_rate, on_epoch_end)
 
-                if history:
+                if model is not None:
                     end_time = time.time()
-                    training_time = end_time - start_time
-                    st.success(f"▲ Pelatihan Model CNN-GRU selesai! Waktu komputasi total: {training_time:.2f} detik")
+                    st.success(f"Pelatihan model selesai dalam {end_time - start_time:.2f} detik!")
                     st.session_state.training_completed = True
+                    btn_check = 1
 
-                # Menambahkan nilai default untuk ketika tombol sudah ditekan
-                btn_check = 1
         else:
-            st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
+            if is_cmc:
+                st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
+            else:
+                st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
 
     with st.expander("6. Evaluasi Model"):
 
         if btn_check == 1:
 
-            with st.spinner('Mengevaluasi model... Harap tunggu.'):
+            start_time = time.time()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            time_estimate = st.empty()
 
-                y_pred = model.predict(x_test)
-                y_pred = scaler.inverse_transform(y_pred).flatten()
-                y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
-                actual_dates = data.index[-len(y_test):]
+            with st.spinner('Sedang Melakukan Evaluasi Model... Harap tunggu.'):
 
-                perf_eval = evaluate_model_performance(y_test, y_pred) or {}
+                predictions = model.predict(x_test, verbose=0)
+                y_pred = scaler.inverse_transform(predictions)
+                y_test_original = scaler.inverse_transform(y_test.reshape(-1, 1))
 
-                st.subheader("Metrik Evaluasi:")
+                perf_eval = evaluate_model_performance(y_test_original, y_pred) or {}
 
-                m_col1, m_col2, m_col3 = st.columns(3)
-                with m_col1:
-                    render_colored_metric_card("Akurasi Model", f"{perf_eval.get('accuracy', 0):.3f}%", perf_eval.get('cat_acc', 'neutral'), "Tingkat ketepatan prediksi")
-                with m_col2:
-                    r2_disp = f"{perf_eval.get('r2'):.3f}" if perf_eval.get('r2') is not None else "-"
-                    render_colored_metric_card("R2 Score", r2_disp, perf_eval.get('cat_r2', 'neutral'), "Koefisien determinasi varians")
-                with m_col3:
-                    render_colored_metric_card("MAPE", f"{perf_eval.get('mape', 0):.3f}", perf_eval.get('cat_mape', 'neutral'), "Mean Absolute Percentage Err")
+                st.subheader("Hasil Evaluasi:")
+                e_col1, e_col2, e_col3 = st.columns(3)
+                with e_col1:
+                    render_colored_metric_card("Akurasi Model", f"{perf_eval.get('accuracy', 0):.3f}%", perf_eval.get('cat_acc', 'neutral'), "Tingkat ketepatan arah & nilai")
+                with e_col2:
+                    r2_display = f"{perf_eval.get('r2'):.3f}" if perf_eval.get('r2') is not None else "-"
+                    render_colored_metric_card("R2 Score", r2_display, perf_eval.get('cat_r2', 'neutral'), "Proporsi varians terjelaskan")
+                with e_col3:
+                    render_colored_metric_card("MAPE", f"{perf_eval.get('mape', 0):.3f}", perf_eval.get('cat_mape', 'neutral'), "Rata-rata persentase galat")
 
-                m_col4, m_col5, m_col6 = st.columns(3)
-                with m_col4:
-                    render_colored_metric_card("RMSE", smart_format(perf_eval.get('rmse', 0), default_decimals=3), perf_eval.get('cat_rmse', 'neutral'), "Root Mean Squared Error")
-                with m_col5:
-                    render_colored_metric_card("MAE", smart_format(perf_eval.get('mae', 0), default_decimals=3), perf_eval.get('cat_mae', 'neutral'), "Mean Absolute Error")
-                with m_col6:
-                    render_colored_metric_card("MSE", smart_format(perf_eval.get('mse', 0), default_decimals=3), perf_eval.get('cat_mse', 'neutral'), "Mean Squared Error")
-
-                if perf_eval.get('mda') is not None:
-                    m_col7, m_col8 = st.columns(2)
-                    with m_col7:
-                        render_colored_metric_card("Akurasi Arah Tren (MDA)", f"▲ {perf_eval.get('mda', 0):.1f}%" if perf_eval.get('mda', 0) >= 50 else f"▼ {perf_eval.get('mda', 0):.1f}%", perf_eval.get('cat_mda', 'neutral'), "Ketepatan arah naik/turun")
-                    with m_col8:
-                        render_colored_metric_card("NRMSE", f"{perf_eval.get('nrmse_pct', 0):.2f}%", perf_eval.get('cat_nrmse', 'neutral'), "Normalized RMSE rasio harga")
+                e_col4, e_col5, e_col6 = st.columns(3)
+                with e_col4:
+                    render_colored_metric_card("RMSE", smart_format(perf_eval.get('rmse', 0), default_decimals=3), perf_eval.get('cat_rmse', 'neutral'), "Akar kuadrat galat rata-rata")
+                with e_col5:
+                    render_colored_metric_card("MAE", smart_format(perf_eval.get('mae', 0), default_decimals=3), perf_eval.get('cat_mae', 'neutral'), "Rata-rata selisih absolut")
+                with e_col6:
+                    render_colored_metric_card("MSE", smart_format(perf_eval.get('mse', 0), default_decimals=3), perf_eval.get('cat_mse', 'neutral'), "Rata-rata kuadrat galat")
 
                 comp_score = perf_eval.get('composite_score', 0)
-                perf_lbl = perf_eval.get('label', 'Performa')
-                perf_stat = perf_eval.get('status', 'info')
+                perf_label = perf_eval.get('label', 'Performa')
+                perf_status = perf_eval.get('status', 'info')
 
-                if perf_stat == 'success':
-                    st.success(f"▲ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
-                elif perf_stat == 'info':
-                    st.info(f"▲ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
-                elif perf_stat == 'warning':
-                    st.warning(f"▼ {perf_lbl} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_down:")
+                if perf_status == 'success':
+                    st.success(f"▲ {perf_label} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_status == 'info':
+                    st.info(f"▲ {perf_label} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_up:")
+                elif perf_status == 'warning':
+                    st.warning(f"▼ {perf_label} (Skor Akumulasi: {comp_score:.1f} / 100)", icon=":material/thumb_down:")
                 else:
-                    st.error(f"▼ {perf_lbl}", icon=":material/thumb_down:")
+                    st.error(f"▼ {perf_label}", icon=":material/thumb_down:")
 
-                with st.popover("Tampilkan Tabel Perbandingan"):
-                    comparison_df = pd.DataFrame({
-                        'Tanggal': actual_dates.strftime('%Y-%m-%d'),
-                        'Harga Aktual': [smart_format(v) for v in y_test],
-                        'Harga Prediksi': [smart_format(v) for v in y_pred]
-                    })
-                    st.dataframe(comparison_df, use_container_width=True)
+                actual_dates = data.index[-len(y_test):]
 
-                # Menampilkan Plot Interaktif dengan Plotly
-                st.subheader("Visualisasi Hasil")
-                fig_eval = plot_interactive_evaluation(actual_dates, y_test, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
-                st.plotly_chart(fig_eval, use_container_width=True, key="fig_eval_result_history")
+                # Plot Interaktif Evaluasi
+                fig_eval = plot_interactive_evaluation(actual_dates, y_test_original, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
+                if fig_eval is not None:
+                    st.plotly_chart(fig_eval, use_container_width=True, key="fig_eval_chart")
 
-                with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Uji / Evaluasi)", expanded=False):
-                    eval_sub_df = data.loc[actual_dates] if (len(actual_dates) > 0 and all(d in data.index for d in actual_dates)) else data.tail(len(y_test))
-                    fig_eval_comp = plot_comprehensive_market_indicators(eval_sub_df, f'Indikator Pasar Komprehensif (Periode Uji {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-                    st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
+                with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume (Data Pengujian)", expanded=False):
+                    test_df = data.iloc[-len(y_test):]
+                    fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                    if fig_eval_comp is not None:
+                        st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
+
+                with st.popover("Tampilkan Detail Metrik Tambahan"):
+                    st.markdown(f"- **NRMSE (Normalized RMSE):** {perf_eval.get('nrmse', 0):.4f} ({perf_eval.get('nrmse_pct', 0):.2f}% dari rata-rata)")
+                    mda_val = perf_eval.get('mda')
+                    mda_str = f"{mda_val:.2f}%" if mda_val is not None else "-"
+                    st.markdown(f"- **MDA (Mean Directional Accuracy):** {mda_str}")
+                    st.markdown(f"- **Jumlah Sampel Uji:** {len(y_test)} langkah data")
 
                 with st.popover("Menampilkan Grafik Loss dan Val Loss"):
-                        # Display final metrics
-                        final_loss = history.history['loss'][-1]
-                        final_val_loss = history.history['val_loss'][-1]
-                        st.metric("Loss akhir", smart_format(final_loss, default_decimals=4))
-                        st.metric("Validation Loss akhir", smart_format(final_val_loss, default_decimals=4))
-
-                        # Display full training history
-                        st.subheader("Riwayat Pelatihan")
-                        st.line_chart(pd.DataFrame(history.history))
+                    final_loss = history.history['loss'][-1]
+                    final_val_loss = history.history['val_loss'][-1]
+                    st.metric("Loss akhir", smart_format(final_loss, default_decimals=4))
+                    st.metric("Validation Loss akhir", smart_format(final_val_loss, default_decimals=4))
+                    st.subheader("Riwayat Pelatihan")
+                    st.line_chart(pd.DataFrame(history.history))
 
                 st.success("Evaluasi Model selesai!")
         else:
@@ -2310,7 +2550,6 @@ def main(stock):
             curr_seq = np.array(last_sequence, dtype=np.float32).copy()
             seq_len = curr_seq.shape[0]
             
-            # Hitung estimasi volatilitas lokal dari akhir sekuens data
             seq_diffs = np.diff(curr_seq.flatten())
             std_step = float(np.std(seq_diffs)) if len(seq_diffs) > 0 else 0.02
             step_bound = max(0.015, min(0.08, std_step * 3.5))
@@ -2320,15 +2559,12 @@ def main(stock):
             curr_tensor = tf.constant(curr_arr.reshape(1, seq_len, 1), dtype=tf.float32)
 
             for step_idx in range(n_steps):
-                # Eksekusi langsung layer TF (50x lebih cepat daripada model.predict di dalam loop)
                 pred_tensor = model(curr_tensor, training=False)
                 raw_pred = float(pred_tensor.numpy()[0, 0])
                 
-                # Batasi lonjakan perubahan per langkah (stabilisasi akumulasi drift autoregresif)
                 step_delta = raw_pred - prev_val
                 clipped_delta = np.clip(step_delta, -step_bound, step_bound)
                 
-                # Untuk horizon sangat panjang (>45 hari), terapkan soft decay pada delta agar tidak runtuh ke minimum scaler
                 if step_idx > 45:
                     damp_factor = 1.0 / (1.0 + (step_idx - 45) * 0.015)
                     clipped_delta *= damp_factor
@@ -2336,7 +2572,6 @@ def main(stock):
                 final_step_val = float(np.clip(prev_val + clipped_delta, 0.005, 0.995))
                 forecast.append(final_step_val)
                 
-                # Perbarui sekuens tensor untuk langkah berikutnya
                 curr_arr = np.roll(curr_arr, -1)
                 curr_arr[-1] = final_step_val
                 curr_tensor = tf.constant(curr_arr.reshape(1, seq_len, 1), dtype=tf.float32)
@@ -2364,20 +2599,25 @@ def main(stock):
                     progress_bar.progress(progress)
 
                     elapsed_time = time.time() - start_time
-                    estimated_total_time = elapsed_time / progress
+                    estimated_total_time = elapsed_time / progress if progress > 0 else 0
                     remaining_time = estimated_total_time - elapsed_time
 
-                    # Menghitung Estimasi waktu
                     time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
                     last_date = data.index[-1]
-                    date_range = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
+                    
+                    if is_cmc:
+                        if "Detik" in forecast_period or "1s" in forecast_period:
+                            step_td = pd.Timedelta(seconds=1)
+                        else:
+                            step_td = pd.Timedelta(minutes=1)
+                        date_range = [last_date + (j + 1) * step_td for j in range(forecast_days)]
+                    else:
+                        date_range = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
 
                     st.subheader(f"Prediksi untuk {forecast_period}:")
 
-                    # Determine the appropriate start index for plotting
-                    start_idx = -(forecast_days*3)
+                    start_idx = max(-len(data), -(forecast_days * 3))
 
-                    # Plot Interaktif dengan Plotly untuk Hasil Prediksi Masa Depan
                     fig_fc = plot_interactive_forecast(
                         hist_dates=data.index[start_idx:],
                         hist_prices=data['Close'].values[start_idx:],
@@ -2388,14 +2628,15 @@ def main(stock):
                         y_label=f'Harga {asset_type}',
                         curr_prefix=curr_prefix
                     )
-                    st.plotly_chart(fig_fc, use_container_width=True, key=f"fig_forecast_{forecast_period}_{i}")
+                    if fig_fc is not None:
+                        st.plotly_chart(fig_fc, use_container_width=True, key=f"fig_forecast_{forecast_period}_{i}")
 
                     with st.expander(f"📈 Grafik Tren Riwayat Harga, VWAP, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
                         fc_slice_df = data.iloc[start_idx:]
                         fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
-                        st.plotly_chart(fig_fc_comp, use_container_width=True, key=f"fig_forecast_comp_{forecast_period}_{i}")
+                        if fig_fc_comp is not None:
+                            st.plotly_chart(fig_fc_comp, use_container_width=True, key=f"fig_forecast_comp_{forecast_period}_{i}")
 
-                    # Data Line untuk grafik & kalkulasi
                     last_actual_price = safe_float(data['Close'].iloc[-1])
                     last_test_price = safe_float(y_pred[-1]) if (len(y_pred) > 0) else last_actual_price
                     last_forecast_price = safe_float(forecast[-1][0])
@@ -2410,11 +2651,11 @@ def main(stock):
                         st.subheader("Tabel dan Metrik Performa:")
 
                         table_df = pd.DataFrame({
-                                    'Tanggal': date_range.strftime('%Y-%b-%d'),
-                                    'Harga Prediksi': [smart_format(v) for v in forecast.flatten()]
-                                })
+                            'Tanggal': [format_timestamp_for_plot(d) for d in date_range],
+                            'Harga Prediksi': [smart_format(v, prefix=curr_prefix) for v in forecast.flatten()]
+                        })
 
-                        perf_eval_sub = evaluate_model_performance(y_test[:forecast_days], y_pred[:forecast_days]) or {}
+                        perf_eval_sub = evaluate_model_performance(y_test_original[:forecast_days], y_pred[:forecast_days]) or {}
 
                         p_col1, p_col2, p_col3 = st.columns(3)
                         with p_col1:
@@ -2474,7 +2715,7 @@ def main(stock):
                             st.error(f"▼ {sub_lbl}", icon=":material/thumb_down:")
 
                     else:
-                        st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali jumlah hari pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
+                        st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali rentang waktu pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
 
                     st.write("---")
 
@@ -2487,7 +2728,6 @@ def main(stock):
 
     with st.expander("8. Interpretasi dan Pelaporan Hasil", True):
 
-        # Mengecek apakah sudah menekan tombol Latih Model
         if btn_check == 1:
 
             if 'last_actual_price' in locals() and 'last_forecast_price' in locals() and 'percent_change' in locals():
@@ -2533,7 +2773,6 @@ def main(stock):
                 else:
                     st.error(f"{perf_eval['label']}", icon=":material/thumb_down:")
 
-                # Fungsi tambahan untuk analisis dan rekomendasi
                 def analyze_market_trends(data, forecast):
                     recent_trend = "bullish" if data['Close'].pct_change().mean().item() > 0 else "bearish"
                     forecast_trend = "naik" if forecast[-1] > forecast[0] else "turun"
@@ -2574,10 +2813,8 @@ def main(stock):
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
 
-# Pengguna memilih bank yang ingin dianalisis dari sidebar Streamlit. Pilihan bank termasuk BCA, BRI, Bank Mandiri, BNI, dan BSI.            
 if __name__ == "__main__":
     
-    # Check programmatic redirection
     manual_select_type = None
     if st.session_state.get('redirect_to_input_custom', False):
         st.session_state.menu_type_index = 1
@@ -2594,7 +2831,6 @@ if __name__ == "__main__":
         
         st.markdown('**PILIH MENU**')
         
-        # Membuat dua opsi menu terpisah
         menu_type = option_menu(
             menu_title=None,
             options=["Informasi Umum", "Prediksi Saham"],
@@ -2604,7 +2840,6 @@ if __name__ == "__main__":
             orientation="horizontal"
         )
         
-        # Sync menu_type_index to avoid sticking
         menu_type_options = ["Informasi Umum", "Prediksi Saham"]
         if menu_type in menu_type_options:
             st.session_state.menu_type_index = menu_type_options.index(menu_type)
@@ -2621,7 +2856,6 @@ if __name__ == "__main__":
                 orientation="vertikal"
             )
             
-            # Sync selection back
             info_options = ["Gambaran Umum", "Glosarium", "Metodologi"]
             if selected in info_options:
                 st.session_state.selected_index_info = info_options.index(selected)
@@ -2638,26 +2872,39 @@ if __name__ == "__main__":
                 
             selected = option_menu(
                 menu_title=None,
-                options=["Input Saham Custom", "PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"],
-                icons=["search", "bank", "bank", "bank", "bank", "bank"],
+                options=[
+                    "Input Saham Custom",
+                    "Input Crypto (CoinMarketCap)",
+                    "PT Bank Mandiri Tbk (Bank Mandiri)",
+                    "PT Bank Rakyat Indonesia Tbk (BRI)",
+                    "PT Bank Central Asia Tbk (BCA)",
+                    "PT Bank Negara Indonesia Tbk (BNI)",
+                    "PT Bank Syariah Indonesia Tbk (BSI)"
+                ],
+                icons=["search", "currency-bitcoin", "bank", "bank", "bank", "bank", "bank"],
                 default_index=st.session_state.selected_index_pred,
                 manual_select=manual_select_pred,
                 orientation="vertikal"
             )
             
-            # Sync selection back
-            pred_options = ["Input Saham Custom", "PT Bank Mandiri Tbk (Bank Mandiri)", "PT Bank Rakyat Indonesia Tbk (BRI)", "PT Bank Central Asia Tbk (BCA)", "PT Bank Negara Indonesia Tbk (BNI)", "PT Bank Syariah Indonesia Tbk (BSI)"]
+            pred_options = [
+                "Input Saham Custom",
+                "Input Crypto (CoinMarketCap)",
+                "PT Bank Mandiri Tbk (Bank Mandiri)",
+                "PT Bank Rakyat Indonesia Tbk (BRI)",
+                "PT Bank Central Asia Tbk (BCA)",
+                "PT Bank Negara Indonesia Tbk (BNI)",
+                "PT Bank Syariah Indonesia Tbk (BSI)"
+            ]
             if selected in pred_options:
                 st.session_state.selected_index_pred = pred_options.index(selected)
             
-        # Menampilkan Manual
         st.markdown('**Manual**')
         st.markdown('- **1. Pilih Tab Prediksi Saham:** Untuk Melakukan Forecasting')
-        st.markdown('- **2. Pilih Option Bank yang tersedia:** Untuk Memilih Kode Saham')
+        st.markdown('- **2. Pilih Sumber Data & Simbol Aset:** yFinance (Harian) atau CoinMarketCap (Intraday Jam/Menit/Detik)')
         st.markdown('- **3. Scroll ke bawah halaman:** Untuk Memilih Periode Forecasting')
         st.markdown('- **4. Tekan Tombol Latih Model:** Untuk Melakukan Pelatihan Model Forecasting')
-        st.markdown('- **5. Lihat Interpretasi dan Pelaporan Hasil:** Menampilkan Kesimpulan Prediksi Saham')
-        
+        st.markdown('- **5. Lihat Interpretasi dan Pelaporan Hasil:** Menampilkan Kesimpulan Prediksi')
         
         st.write("\n")
         
@@ -2672,31 +2919,25 @@ if __name__ == "__main__":
             st.markdown('- **Buka Toggle List Evaluasi Model:** Untuk Melihat Kemampuan Model')
             st.markdown('- **Buka Toggle List Visualisasi Prediksi dan Perhitungan Metrik:** Untuk Melihat Hasil Prediksi Berupa Grafik Dan Perhitungan Metrik')
             st.markdown('- **Buka Toggle List Interpretasi dan Pelaporan Hasil:** Untuk Melihat Interpretasi dan Pelaporan Akhir Periode Forecast yang terakhir')
-            
 
-# Logika untuk menampilkan konten berdasarkan pilihan
 if menu_type == "Informasi Umum":
     
     if selected == "Gambaran Umum":
         with open('./TEXT/gambaran_umum.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
-        # Split after the portfolio paragraph and inject redirect button
         target_marker = "Portofolio ini dibuat oleh Ilham Rizkyansyah &middot; Universitas Gunadarma Informatika"
         if target_marker in html_content:
             parts = html_content.split(target_marker)
             subparts = parts[1].split("</p>", 1)
             
-            # Display first part up to the paragraph close tag
             st.markdown(parts[0] + target_marker + subparts[0] + "</p>", unsafe_allow_html=True)
             
-            # Display shortcut button
             if st.button("👉 Klik di sini untuk melakukan forecasting langsung", type="primary", use_container_width=True):
                 st.session_state.redirect_to_input_custom = True
                 st.session_state.redirect_to_input_custom_pred = True
                 st.rerun()
             
-            # Display remaining markdown content
             st.markdown(subparts[1], unsafe_allow_html=True)
         else:
             st.markdown(html_content, unsafe_allow_html=True)
@@ -2705,24 +2946,22 @@ if menu_type == "Informasi Umum":
         with open('./TEXT/glosarium.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
         
-        # Display the HTML content using st.iframe
         st.markdown(html_content, unsafe_allow_html=True)
         
     elif selected == "Metodologi":
         with open('./TEXT/metodologi.md', 'r', encoding='utf-8') as file:
             html_content = file.read()
     
-        # Display the HTML content using st.iframe
         st.markdown(html_content, unsafe_allow_html=True)  
         
 if menu_type == "Prediksi Saham":
     
     if selected == "Input Saham Custom":
         if 'custom_stock_input' not in st.session_state:
-            st.session_state.custom_stock_input = ""
+            st.session_state.custom_stock_input = "BTC-USD"
 
-        st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi (contoh: AAPL, GOOGL, BMRI.JK, dll.)</p>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham / Crypto Custom (yFinance)</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi via yFinance (contoh: AAPL, GOOGL, BMRI.JK, BTC-USD, dll.)</p>", unsafe_allow_html=True)
         st.info("💡 **Tips:** Silakan scroll ke bawah halaman untuk melakukan forecasting/prediksi setelah memilih atau memasukkan kode saham.")
         
         # Popular Indonesia Stock Buttons
@@ -2821,20 +3060,12 @@ if menu_type == "Prediksi Saham":
                 st.session_state.custom_stock_input = "DOT-USD"
                 st.rerun()
         
-        # yFinance Ticker Guidelines Expander (Closed by default)
         with st.expander("💡 Ketentuan & Tips Penulisan Ticker yFinance", expanded=False):
             st.markdown("""
             **Ketentuan Penulisan Ticker yFinance:**
-            
-            1. **Saham Indonesia (IHSG)**:
-               Khusus untuk saham di Bursa Efek Indonesia, tambahkan akhiran **`.JK`** (misalnya: `BBCA.JK`, `BMRI.JK`, `BBNI.JK`, `BRIS.JK`).
-               
-            2. **Saham Global (AS/S&P 500)**:
-               Mengikuti kode ticker standar bursa AS (misalnya: `AAPL`, `GOOGL`, `MSFT`, `TSLA`, `AMZN`). 
-               Referensi lengkap dapat dilihat di [Daftar Perusahaan S&P 500](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies).
-               
-            3. **Cryptocurrency**:
-               Untuk aset crypto, gunakan kode koin diikuti dengan akhiran **`-USD`** (misalnya: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`).
+            1. **Saham Indonesia (IHSG)**: Tambahkan akhiran **`.JK`** (misalnya: `BBCA.JK`, `BMRI.JK`, `BBNI.JK`, `BRIS.JK`).
+            2. **Saham Global (AS/S&P 500)**: Kode ticker standar bursa AS (misalnya: `AAPL`, `GOOGL`, `MSFT`, `TSLA`).
+            3. **Cryptocurrency**: Gunakan kode koin diikuti akhiran **`-USD`** (misalnya: `BTC-USD`, `ETH-USD`, `SOL-USD`).
             """)
         
         st.write("")
@@ -2855,20 +3086,86 @@ if menu_type == "Prediksi Saham":
         
         if custom_stock:
             st.cache_data.clear()
-            main(custom_stock)
+            main(custom_stock, data_source="yfinance")
         else:
             st.warning("Silakan masukkan kode saham terlebih dahulu")
+
+    elif selected == "Input Crypto (CoinMarketCap)":
+        if 'cmc_crypto_input' not in st.session_state:
+            st.session_state.cmc_crypto_input = "BTC"
+
+        st.markdown("<h1 style='text-align: left; color: #F7931A;'>Prediksi Crypto melalui CoinMarketCap</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode aset crypto dan API Key CoinMarketCap untuk analisis data frekuensi tinggi (Menit/Jam/Detik).</p>", unsafe_allow_html=True)
         
+        default_cmc_key = get_cmc_api_key_from_env_or_secrets()
+        cmc_key_input = st.text_input("🔑 Masukkan CoinMarketCap API Key", value=default_cmc_key, type="password", placeholder="Masukkan API Key CoinMarketCap Anda (Opsional jika sudah ada di secrets)...")
+        if default_cmc_key:
+            st.caption("✅ API Key terdeteksi dari Secrets/Environment.")
+        
+        st.write("**Pilihan Kripto Populer (CoinMarketCap)**")
+        cmc_cols1 = st.columns(4)
+        with cmc_cols1[0]:
+            if st.button("BTC (Bitcoin)", key="cmc_btc"):
+                st.session_state.cmc_crypto_input = "BTC"
+                st.rerun()
+        with cmc_cols1[1]:
+            if st.button("ETH (Ethereum)", key="cmc_eth"):
+                st.session_state.cmc_crypto_input = "ETH"
+                st.rerun()
+        with cmc_cols1[2]:
+            if st.button("SOL (Solana)", key="cmc_sol"):
+                st.session_state.cmc_crypto_input = "SOL"
+                st.rerun()
+        with cmc_cols1[3]:
+            if st.button("BNB (Binance)", key="cmc_bnb"):
+                st.session_state.cmc_crypto_input = "BNB"
+                st.rerun()
+                
+        cmc_cols2 = st.columns(4)
+        with cmc_cols2[0]:
+            if st.button("XRP (Ripple)", key="cmc_xrp"):
+                st.session_state.cmc_crypto_input = "XRP"
+                st.rerun()
+        with cmc_cols2[1]:
+            if st.button("DOGE (Dogecoin)", key="cmc_doge"):
+                st.session_state.cmc_crypto_input = "DOGE"
+                st.rerun()
+        with cmc_cols2[2]:
+            if st.button("ADA (Cardano)", key="cmc_ada"):
+                st.session_state.cmc_crypto_input = "ADA"
+                st.rerun()
+        with cmc_cols2[3]:
+            if st.button("DOT (Polkadot)", key="cmc_dot"):
+                st.session_state.cmc_crypto_input = "DOT"
+                st.rerun()
+                
+        st.write("")
+        st.markdown("**Masukkan Simbol Kripto**")
+        col_c_in, col_c_btn = st.columns([5, 1])
+        with col_c_in:
+            cmc_symbol = st.text_input(
+                "Masukkan Simbol Kripto",
+                value=st.session_state.cmc_crypto_input,
+                placeholder="Contoh: BTC, ETH, DOGE, SOL",
+                label_visibility="collapsed"
+            )
+        with col_c_btn:
+            st.button("Enter 🚀", type="primary", use_container_width=True, key="btn_cmc_enter")
+            
+        if cmc_symbol != st.session_state.cmc_crypto_input:
+            st.session_state.cmc_crypto_input = cmc_symbol
+            
+        if cmc_symbol:
+            st.cache_data.clear()
+            main(cmc_symbol, data_source="coinmarketcap", api_key=cmc_key_input)
+        else:
+            st.warning("Silakan masukkan simbol crypto terlebih dahulu")
     
-    if selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
-        # Menampilkan logo Perusahaan
+    elif selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
         image = Image.open('./LOGO/BMRI.png')
         st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
         
-        # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #003A70;'>PT Bank Mandiri Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
         st.markdown("<p style='text-align: justify; color: black;'>PT Bank Mandiri (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 2 Oktober 1998 sebagai hasil merger 4 bank pemerintah. Bank Mandiri terdaftar di Bursa Efek Indonesia dengan kode saham BMRI. Pemegang saham utamanya adalah Pemerintah Indonesia. Bank ini berfokus pada layanan korporasi, komersial, mikro & ritel, dan tresuri. Bank Mandiri memiliki jaringan cabang dan ATM yang luas di Indonesia serta terus mengembangkan ekosistem digital melalui Livin' by Mandiri.</p>", unsafe_allow_html=True)
         st.write('Informasi singkat:')
         st.markdown('- **Tanggal Didirikan:** 2 Oktober 1998')
@@ -2878,18 +3175,13 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Ekosistem digital melalui Livin by Mandiri')
         
         st.cache_data.clear()
-        main("BMRI.JK")
- 
+        main("BMRI.JK", data_source="yfinance")
 
     elif selected == "PT Bank Rakyat Indonesia Tbk (BRI)":
-        # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBRI.png')
         st.image(image, caption=None, width=385, clamp=False, channels="RGB", output_format="auto")
         
-        # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #00529C;'>PT Bank Rakyat Indonesia Tbk</h1>", unsafe_allow_html=True) 
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
         st.markdown("<p style='text-align: justify; color: black;'>PT Bank Rakyat Indonesia (Persero) Tbk (BRI) adalah bank BUMN terbesar di Indonesia yang didirikan pada 16 Desember 1895. BRI terdaftar di Bursa Efek Indonesia dengan kode saham BBRI. Pemegang saham utamanya adalah Pemerintah Indonesia. BRI berfokus utama pada pembiayaan UMKM dan sektor pertanian. Bank ini memiliki jaringan unit kerja terluas hingga ke pelosok desa dan terus mengembangkan layanan perbankan digital seperti BRImo.</p>", unsafe_allow_html=True)
         st.write('Informasi singkat:')
         st.markdown('- **Tanggal Didirikan:** 16 Desember 1895')
@@ -2899,17 +3191,13 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Layanan perbankan digital seperti BRImo')
         
         st.cache_data.clear()
-        main("BBRI.JK")
+        main("BBRI.JK", data_source="yfinance")
 
     elif selected == "PT Bank Central Asia Tbk (BCA)":
-        # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBCA.png')
         st.image(image, caption=None, width=465, clamp=False, channels="RGB", output_format="auto")
         
-        # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #0060AF;'>PT Bank Central Asia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
         st.markdown("<p style='text-align: justify; color: black;'>PT Bank Central Asia Tbk adalah bank swasta terbesar di Indonesia yang didirikan pada 21 Februari 1957. BCA terdaftar di Bursa Efek Indonesia dengan kode saham BBCA. Pemegang saham utamanya adalah PT Dwimuria Investama Andalan. BCA berfokus pada layanan perbankan ritel, UKM, dan korporasi. Bank ini memiliki jaringan cabang dan ATM yang luas di seluruh Indonesia serta dikenal dengan layanan perbankan digitalnya seperti m-BCA dan KlikBCA.</p>", unsafe_allow_html=True)
         st.write('Informasi singkat:')
         st.markdown('- **Tanggal Didirikan:** 21 Februari 1957')
@@ -2919,17 +3207,13 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Dikenal dengan:** Layanan perbankan digital seperti m-BCA dan KlikBCA')
         
         st.cache_data.clear()
-        main("BBCA.JK")  
+        main("BBCA.JK", data_source="yfinance")  
 
     elif selected == "PT Bank Negara Indonesia Tbk (BNI)":
-        # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BBNI.png')
         st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
         
-        # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #006885;'>PT Bank Negara Indonesia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
         st.markdown("<p style='text-align: justify; color: black;'>PT Bank Negara Indonesia (Persero) Tbk adalah salah satu bank BUMN terbesar di Indonesia yang didirikan pada 5 Juli 1946. BNI terdaftar di Bursa Efek Indonesia dengan kode saham BBNI. Pemegang saham utamanya adalah Pemerintah Indonesia. BNI berfokus pada layanan korporasi, ritel, dan internasional. Bank ini memiliki jaringan cabang di dalam dan luar negeri serta terus mengembangkan layanan digital seperti BNI Mobile Banking.</p>", unsafe_allow_html=True)
         st.write('Informasi singkat:')
         st.markdown('- **Tanggal Didirikan:** 5 Juli 1946')
@@ -2939,17 +3223,13 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Layanan digital seperti BNI Mobile Banking')
         
         st.cache_data.clear()
-        main("BBNI.JK")
+        main("BBNI.JK", data_source="yfinance")
 
     elif selected == "PT Bank Syariah Indonesia Tbk (BSI)":
-        # Menampilkan logo Perusahaan
         image = Image.open('./LOGO/BRIS.png')
         st.image(image, caption=None, width=520, clamp=False, channels="RGB", output_format="auto")
         
-        # Menampilkan Judul
         st.markdown("<h1 style='text-align: left; color: #00A39D;'>PT Bank Syariah Indonesia Tbk</h1>", unsafe_allow_html=True)
-        
-        # Menampilkan deskripsi singkat tentang Perusahaan
         st.markdown("<p style='text-align: justify; color: black;'>PT Bank Syariah Indonesia Tbk adalah bank syariah terbesar di Indonesia yang didirikan pada 1 Februari 2021 sebagai hasil merger 3 bank syariah BUMN. BSI terdaftar di Bursa Efek Indonesia dengan kode saham BRIS. Pemegang saham utamanya adalah PT Bank Mandiri (Persero) Tbk, PT Bank Negara Indonesia (Persero) Tbk, dan PT Bank Rakyat Indonesia (Persero) Tbk. BSI berfokus pada layanan perbankan syariah ritel dan korporasi serta terus mengembangkan ekosistem keuangan syariah digital.</p>", unsafe_allow_html=True)
         st.write('Informasi singkat:')
         st.markdown('- **Tanggal Didirikan:** 1 Februari 2021 (hasil merger 3 bank syariah BUMN)')
@@ -2959,4 +3239,4 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Ekosistem keuangan syariah digital')
         
         st.cache_data.clear()
-        main("BRIS.JK")
+        main("BRIS.JK", data_source="yfinance")
