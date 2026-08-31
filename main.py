@@ -1896,27 +1896,34 @@ def main(stock, data_source="yfinance", api_key=""):
         st.subheader("Pengaturan Data Pelatihan")
 
         if is_cmc:
-            st.markdown("Pilih durasi data historis frekuensi tinggi (Intraday) yang digunakan untuk melatih model:")
+            st.markdown("Pilih durasi data historis yang digunakan untuk melatih model (Tahun, Bulan, Hari, Jam, Menit, Detik):")
             c_sl1, c_sl2 = st.columns(2)
             with c_sl1:
-                days_ago = st.slider('📅 Hari:', 0, 30, 7, help="Pilihan hari data")
-                hours_ago = st.slider('⏰ Jam (0 - 23):', 0, 23, 12, help="Pilihan jam data tambahan")
+                years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30, help="Pilihan tahun data historis (Default 30 Tahun)")
+                months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0, help="Pilihan bulan data tambahan")
+                days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0, help="Pilihan hari data tambahan")
             with c_sl2:
+                hours_ago = st.slider('⏰ Jam (0 - 23):', 0, 23, 0, help="Pilihan jam data tambahan")
                 mins_ago = st.slider('⏱️ Menit (0 - 59):', 0, 59, 0, help="Pilihan menit data tambahan")
                 secs_ago = st.slider('⏲️ Detik (0 - 59):', 0, 59, 0, help="Pilihan detik data tambahan")
             
-            total_duration = timedelta(days=days_ago, hours=hours_ago, minutes=mins_ago, seconds=secs_ago)
+            total_days = (years_ago * 365) + (months_ago * 30) + days_ago
+            total_duration = timedelta(days=total_days, hours=hours_ago, minutes=mins_ago, seconds=secs_ago)
             if total_duration.total_seconds() < 1800: # minimal 30 menit
                 total_duration = timedelta(minutes=30)
                 
-            last_ts = full_data.index[-1]
-            start_ts = last_ts - total_duration
-            data = full_data[full_data.index >= start_ts].copy()
-            if len(data) < 30:
-                data = full_data.tail(min(len(full_data), 120)).copy()
-            days = days_ago
+            if years_ago >= 30 and months_ago == 0 and days_ago == 0 and hours_ago == 0 and mins_ago == 0 and secs_ago == 0:
+                data = full_data.copy()
+            else:
+                last_ts = full_data.index[-1]
+                start_ts = last_ts - total_duration
+                data = full_data[full_data.index >= start_ts].copy()
+                if len(data) < 30:
+                    data = full_data.tail(min(len(full_data), 120)).copy()
+            days = total_days
             
-            st.write(f"Rentang Waktu Terpilih: **{days_ago} Hari {hours_ago} Jam {mins_ago} Menit {secs_ago} Detik** ({len(data)} baris data).")
+            duration_str = f"{years_ago} Tahun {months_ago} Bulan {days_ago} Hari {hours_ago} Jam {mins_ago} Menit {secs_ago} Detik"
+            st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
 
         else:
             use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
@@ -2107,23 +2114,33 @@ def main(stock, data_source="yfinance", api_key=""):
 
             with st.popover("⚙️ Pengaturan Panjang Sekuens (Lookback)"):
                 if is_cmc:
-                    seq_options = [5, 10, 15, 20, 30, 45, 60]
-                    max_seq = max(5, min(60, len(data) // 3))
-                    valid_seq_options = [s for s in seq_options if s <= max_seq]
+                    all_seq_options = [3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+                    max_seq = max(3, min(180, len(data) // 3))
+                    valid_seq_options = [s for s in all_seq_options if s <= max_seq]
                     if not valid_seq_options:
-                        valid_seq_options = [15]
-                    default_seq = 15 if 15 in valid_seq_options else valid_seq_options[-1]
-                    seq_length = st.select_slider("Panjang Sekuens (Lookback Window) [Menit/Langkah]", options=valid_seq_options, value=default_seq)
-                    st.info('Rekomendasi Default: **15 Langkah Data** (Rentang Akurat: **10–30 Langkah**).', icon=":material/recommend:")
+                        valid_seq_options = [max(1, len(data) // 4)]
+                    default_seq = 15 if 15 in valid_seq_options else (30 if 30 in valid_seq_options else valid_seq_options[-1])
+                    seq_length = st.select_slider(
+                        "Panjang Sekuens (Lookback Window) [Langkah Data]",
+                        options=valid_seq_options,
+                        value=default_seq,
+                        key=f"seq_slider_cmc_{len(data)}"
+                    )
+                    st.info(f'Rekomendasi Default: **{default_seq} Langkah Data** (Disesuaikan otomatis sesuai ukuran data: {len(data)} baris).', icon=":material/recommend:")
                 else:
-                    seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+                    all_seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
                     max_seq = max(5, min(180, len(data) // 3))
-                    valid_seq_options = [s for s in seq_options if s <= max_seq]
+                    valid_seq_options = [s for s in all_seq_options if s <= max_seq]
                     if not valid_seq_options:
                         valid_seq_options = [30]
-                    default_seq = 60 if 60 in valid_seq_options else valid_seq_options[-1]
-                    seq_length = st.select_slider("Panjang Sekuens (Hari)", options=valid_seq_options, value=default_seq)
-                    st.info('Rekomendasi Default: **60 Hari** (~3 Bulan bursa). Rentang Paling Akurat: **30–60 Hari**.', icon=":material/recommend:")
+                    default_seq = 60 if 60 in valid_seq_options else (30 if 30 in valid_seq_options else valid_seq_options[-1])
+                    seq_length = st.select_slider(
+                        "Panjang Sekuens (Hari)",
+                        options=valid_seq_options,
+                        value=default_seq,
+                        key=f"seq_slider_yf_{len(data)}"
+                    )
+                    st.info(f'Rekomendasi Default: **{default_seq} Hari** (Disesuaikan otomatis sesuai ukuran data: {len(data)} hari).', icon=":material/recommend:")
                 st.warning('Ket: Sekuens terlalu pendek kehilangan konteks tren, sekuens terlalu panjang menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
 
             with st.popover("⚙️ Pengaturan Normalisasi (MinMaxScaler)"):
@@ -2321,74 +2338,117 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.warning("Ket: Batch size kecil (4-8) sangat efektif untuk menangkap volatilitas kripto, sedangkan batch moderat (16-32) lebih stabil untuk saham konvensional.", icon=":material/insights:")
 
             # Forecasting Options
-            if is_cmc:
-                cmc_forecast_options_list = [
+            def get_cmc_forecast_options():
+                return [
                     ("1 Detik (1s)", 1),
                     ("1 Menit (1m)", 1),
                     ("3 Menit (3m)", 3),
                     ("5 Menit (5m)", 5),
+                    ("10 Menit (10m)", 10),
                     ("15 Menit (15m)", 15),
                     ("30 Menit (30m)", 30),
+                    ("45 Menit (45m)", 45),
                     ("1 Jam (1h)", 60),
                     ("2 Jam (2h)", 120),
+                    ("3 Jam (3h)", 180),
                     ("4 Jam (4h)", 240),
                     ("6 Jam (6h)", 360),
                     ("8 Jam (8h)", 480),
-                    ("12 Jam (12h)", 720)
+                    ("12 Jam (12h)", 720),
+                    ("1 Hari (24h)", 1440),
+                    ("2 Hari (48h)", 2880),
+                    ("3 Hari (72h)", 4320),
+                    ("1 Minggu (7D)", 10080)
                 ]
-                forecast_options_dict = {name: steps for name, steps in cmc_forecast_options_list if steps <= len(x_test)}
-                if not forecast_options_dict:
-                    forecast_options_dict = {"1 Menit (1m)": 1, "5 Menit (5m)": 5}
-                default_cmc_options = [opt for opt in ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)"] if opt in forecast_options_dict]
-                if not default_cmc_options:
-                    default_cmc_options = list(forecast_options_dict.keys())[:3]
-                default_options = default_cmc_options
+
+            default_cmc_options_map = {
+                1: ["1 Menit (1m)"],
+                3: ["1 Menit (1m)", "3 Menit (3m)"],
+                5: ["1 Menit (1m)", "3 Menit (3m)", "5 Menit (5m)"],
+                10: ["1 Menit (1m)", "5 Menit (5m)", "10 Menit (10m)"],
+                15: ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)"],
+                30: ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)"],
+                45: ["5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "45 Menit (45m)"],
+                60: ["5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)"],
+                120: ["15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)", "2 Jam (2h)"],
+                180: ["15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)", "3 Jam (3h)"],
+                240: ["30 Menit (30m)", "1 Jam (1h)", "2 Jam (2h)", "4 Jam (4h)"],
+                360: ["30 Menit (30m)", "1 Jam (1h)", "3 Jam (3h)", "6 Jam (6h)"],
+                480: ["1 Jam (1h)", "2 Jam (2h)", "4 Jam (4h)", "8 Jam (8h)"],
+                720: ["1 Jam (1h)", "3 Jam (3h)", "6 Jam (6h)", "12 Jam (12h)"],
+                1440: ["1 Jam (1h)", "6 Jam (6h)", "12 Jam (12h)", "1 Hari (24h)"],
+                2880: ["6 Jam (6h)", "12 Jam (12h)", "1 Hari (24h)", "2 Hari (48h)"],
+                4320: ["12 Jam (12h)", "1 Hari (24h)", "2 Hari (48h)", "3 Hari (72h)"],
+                10080: ["1 Hari (24h)", "2 Hari (48h)", "3 Hari (72h)", "1 Minggu (7D)"]
+            }
+
+            def initialize_cmc_forecast_options(x_test):
+                f_opts = get_cmc_forecast_options()
+                f_dict = {name: steps for name, steps in f_opts}
+                f_steps = x_test.shape[0]
+
+                valid_opts = {name: steps for name, steps in f_dict.items() if steps <= f_steps}
+                if not valid_opts:
+                    max_s = max((steps for steps in f_dict.values() if steps <= f_steps), default=1)
+                    valid_opts = {name: steps for name, steps in f_dict.items() if steps == max_s}
+                if not valid_opts:
+                    valid_opts = {"1 Menit (1m)": 1}
+
+                closest_key = min(default_cmc_options_map.keys(), key=lambda x: abs(x - f_steps))
+                def_opts = default_cmc_options_map[closest_key]
+                def_opts = [o for o in def_opts if o in valid_opts]
+                if not def_opts:
+                    def_opts = list(valid_opts.keys())[:min(len(valid_opts), 4)]
+                return valid_opts, def_opts
+
+            def get_forecast_options(stock):
+                return [
+                    ("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6),
+                    ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60),
+                    ("3 Bulan", 90), ("4 Bulan", 120), ("5 Bulan", 150), ("6 Bulan", 180), ("7 Bulan", 210),
+                    ("8 Bulan", 240), ("9 Bulan", 270), ("10 Bulan", 300), ("11 Bulan", 330), ("1 Tahun", 365),
+                    ("2 Tahun", 730)
+                ]
+
+            default_options_map = {
+                3: ["1 Hari", "2 Hari", "3 Hari"],
+                4: ["2 Hari", "3 Hari", "4 Hari"],
+                5: ["3 Hari", "4 Hari", "5 Hari"],
+                6: ["4 Hari", "5 Hari", "6 Hari"],
+                7: ["5 Hari", "6 Hari", "1 Minggu"],
+                14: ["6 Hari", "1 Minggu", "2 Minggu"],
+                21: ["1 Minggu", "2 Minggu", "3 Minggu"],
+                30: ["1 Minggu", "2 Minggu", "1 Bulan"],
+                60: ["1 Minggu", "1 Bulan", "2 Bulan"],
+                90: ["1 Minggu", "1 Bulan", "3 Bulan"],
+                120: ["1 Minggu", "1 Bulan", "3 Bulan", "4 Bulan"],
+                150: ["1 Minggu", "1 Bulan", "3 Bulan", "5 Bulan"],
+                180: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"],
+                210: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "7 Bulan"],
+                240: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "8 Bulan"],
+                270: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "9 Bulan"],
+                300: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "10 Bulan"],
+                330: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "11 Bulan"],
+                365: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun"],
+                730: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun", "2 Tahun"]
+            }
+
+            def initialize_forecast_options(stock, x_test):
+                f_opts = get_forecast_options(stock)
+                f_dict = {name: d for name, d in f_opts}
+                f_days = x_test.shape[0]
+                valid_opts = {name: d for name, d in f_dict.items() if d <= f_days}
+                if not valid_opts:
+                    max_d = max(d for d in f_dict.values() if d <= f_days)
+                    valid_opts = {name: d for name, d in f_dict.items() if d == max_d}
+                closest_key = min(default_options_map.keys(), key=lambda x: abs(x - f_days))
+                def_opts = default_options_map[closest_key]
+                def_opts = [o for o in def_opts if o in valid_opts]
+                return valid_opts, def_opts
+
+            if is_cmc:
+                forecast_options_dict, default_options = initialize_cmc_forecast_options(x_test)
             else:
-                def get_forecast_options(stock):
-                    return [
-                        ("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6),
-                        ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60),
-                        ("3 Bulan", 90), ("4 Bulan", 120), ("5 Bulan", 150), ("6 Bulan", 180), ("7 Bulan", 210),
-                        ("8 Bulan", 240), ("9 Bulan", 270), ("10 Bulan", 300), ("11 Bulan", 330), ("1 Tahun", 365),
-                        ("2 Tahun", 730)
-                    ]
-
-                default_options_map = {
-                    3: ["1 Hari", "2 Hari", "3 Hari"],
-                    4: ["2 Hari", "3 Hari", "4 Hari"],
-                    5: ["3 Hari", "4 Hari", "5 Hari"],
-                    6: ["4 Hari", "5 Hari", "6 Hari"],
-                    7: ["5 Hari", "6 Hari", "1 Minggu"],
-                    14: ["6 Hari", "1 Minggu", "2 Minggu"],
-                    21: ["1 Minggu", "2 Minggu", "3 Minggu"],
-                    30: ["1 Minggu", "2 Minggu", "1 Bulan"],
-                    60: ["1 Minggu", "1 Bulan", "2 Bulan"],
-                    90: ["1 Minggu", "1 Bulan", "3 Bulan"],
-                    120: ["1 Minggu", "1 Bulan", "3 Bulan", "4 Bulan"],
-                    150: ["1 Minggu", "1 Bulan", "3 Bulan", "5 Bulan"],
-                    180: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"],
-                    210: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "7 Bulan"],
-                    240: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "8 Bulan"],
-                    270: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "9 Bulan"],
-                    300: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "10 Bulan"],
-                    330: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "11 Bulan"],
-                    365: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun"],
-                    730: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun", "2 Tahun"]
-                }
-
-                def initialize_forecast_options(stock, x_test):
-                    f_opts = get_forecast_options(stock)
-                    f_dict = {name: d for name, d in f_opts}
-                    f_days = x_test.shape[0]
-                    valid_opts = {name: d for name, d in f_dict.items() if d <= f_days}
-                    if not valid_opts:
-                        max_d = max(d for d in f_dict.values() if d <= f_days)
-                        valid_opts = {name: d for name, d in f_dict.items() if d == max_d}
-                    closest_key = min(default_options_map.keys(), key=lambda x: abs(x - f_days))
-                    def_opts = default_options_map[closest_key]
-                    def_opts = [o for o in def_opts if o in valid_opts]
-                    return valid_opts, def_opts
-
                 forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
 
             fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}_{data_source}"
