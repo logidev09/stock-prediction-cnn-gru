@@ -2333,9 +2333,9 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.cmc_end_offset_btn = None
             else:
                 st.markdown("**Pilih Tanggal / Waktu Selesai (Data Historis):**")
-                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir (Khusus 1H 🟠, 4H 🔴, 1D 🟢):</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir:</b></small>", unsafe_allow_html=True)
                 
-                # Tombol Cepat Titik Akhir (1m - YTD)
+                # Tombol Cepat Titik Akhir (1m - YTD) (Pewarnaan khusus 1H, 4H, 1D pada titik akhir)
                 btn_cols_1 = st.columns(6)
                 btn_cols_2 = st.columns(6)
                 for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
@@ -2386,30 +2386,27 @@ def main(stock, data_source="yfinance", api_key=""):
             if selected_cmc_method == "Pilihan Cepat Rentang Waktu (1m - 30T)":
                 cmc_preset_keys = list(PRESET_DURATIONS.keys())
                 
-                # Baris Tombol Cepat (Warna khusus untuk 1H, 4H, 1D)
-                st.markdown("<small><b>Pilih Cepat via Tombol (Khusus 1H 🟠, 4H 🔴, 1D 🟢):</b></small>", unsafe_allow_html=True)
+                # Baris Tombol Cepat (Teks standar tanpa pewarnaan khusus)
+                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
                 r_btn1 = st.columns(6)
                 r_btn2 = st.columns(6)
                 r_btn3 = st.columns(6)
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[:6]):
                     with r_btn1[idx_k]:
-                        lbl_styled = format_quick_button_label(k_lbl)
                         b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
                             st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[6:12]):
                     with r_btn2[idx_k]:
-                        lbl_styled = format_quick_button_label(k_lbl)
                         b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
                             st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[12:]):
                     with r_btn3[idx_k]:
-                        lbl_styled = format_quick_button_label(k_lbl)
                         b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.cmc_preset_selected = k_lbl
                             st.rerun()
 
@@ -2505,7 +2502,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.yf_end_offset_btn = None
             else:
                 st.markdown("**Pilih Tanggal Selesai Pelatihan:**")
-                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir (Khusus 1D 🟢):</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir:</b></small>", unsafe_allow_html=True)
                 
                 yf_end_offsets = [
                     ("1 D", timedelta(days=1)),
@@ -2554,21 +2551,19 @@ def main(stock, data_source="yfinance", api_key=""):
             yf_preset_keys = ["1 D", "1 W", "1 M", "90 D", "YTD", "2 T", "3 T", "4 T", "5 T", "10 T", "30 T"]
 
             if selected_method == "Pilihan Cepat Rentang Waktu (1D - 30T)":
-                st.markdown("<small><b>Pilih Cepat via Tombol (Khusus 1D 🟢):</b></small>", unsafe_allow_html=True)
+                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
                 r_btn_yf1 = st.columns(6)
                 r_btn_yf2 = st.columns(5)
                 for idx_k, k_lbl in enumerate(yf_preset_keys[:6]):
                     with r_btn_yf1[idx_k]:
-                        lbl_styled = format_quick_button_label(k_lbl)
                         b_type = "primary" if st.session_state.yf_preset_selected == k_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
+                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.yf_preset_selected = k_lbl
                             st.rerun()
                 for idx_k, k_lbl in enumerate(yf_preset_keys[6:]):
                     with r_btn_yf2[idx_k]:
-                        lbl_styled = format_quick_button_label(k_lbl)
                         b_type = "primary" if st.session_state.yf_preset_selected == k_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
+                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", type=b_type, use_container_width=True):
                             st.session_state.yf_preset_selected = k_lbl
                             st.rerun()
 
@@ -2785,41 +2780,59 @@ def main(stock, data_source="yfinance", api_key=""):
                 key="btn_dl_train_data"
             )
 
+    # ==========================================
+    # OTOMATISASI PARAMETER BERDASARKAN BANYAK DATA (len(data))
+    # ==========================================
+    n_data_samples = len(data) if not data.empty else 0
+    is_thousands_data = (n_data_samples >= 1000)
+
+    if is_thousands_data:
+        # Ribuan Data (Intraday Menit/Jam CMC atau Multi-Tahun) -> 100 epoch, batch 4, lr 0.0005
+        auto_epoch = 100
+        auto_batch = 4
+        auto_lr = 0.0005
+        auto_conv_filters = 64
+        auto_kernel_size = 3
+        auto_gru_1 = 64
+        auto_gru_2 = 64
+        auto_dropout = 0.2
+        auto_seq_len = 60
+        dataset_category_desc = "Ribuan Data (High-Frequency / Deep Temporal Modeling)"
+    else:
+        # Ratusan Sampel (< 1000 baris) -> 50 epoch, batch 32, lr 0.0010
+        auto_epoch = 50
+        auto_batch = 32
+        auto_lr = 0.0010
+        auto_conv_filters = 32
+        auto_kernel_size = 3
+        auto_gru_1 = 32
+        auto_gru_2 = 32
+        auto_dropout = 0.2
+        auto_seq_len = 30 if n_data_samples >= 120 else max(5, n_data_samples // 4)
+        dataset_category_desc = "Ratusan Sampel (Standard Data / Anti-Overfitting)"
+
     with st.expander("3. Pra-pemrosesan Data"):
 
         is_valid_data = len(data) >= 30 if is_cmc else (days >= 120)
 
         if is_valid_data:
+            st.info(f"⚡ **Penyesuaian Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):** Kategori **{dataset_category_desc}** aktif.", icon=":material/auto_awesome:")
 
             with st.popover("⚙️ Pengaturan Panjang Sekuens (Lookback)"):
-                if is_cmc:
-                    all_seq_options = [3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
-                    max_seq = max(3, min(180, len(data) // 3))
-                    valid_seq_options = [s for s in all_seq_options if s <= max_seq]
-                    if not valid_seq_options:
-                        valid_seq_options = [max(1, len(data) // 4)]
-                    default_seq = 15 if 15 in valid_seq_options else (30 if 30 in valid_seq_options else valid_seq_options[-1])
-                    seq_length = st.select_slider(
-                        "Panjang Sekuens (Lookback Window) [Langkah Data]",
-                        options=valid_seq_options,
-                        value=default_seq,
-                        key=f"seq_slider_cmc_{len(data)}"
-                    )
-                    st.info(f'Rekomendasi Default: **{default_seq} Langkah Data** (Disesuaikan otomatis sesuai ukuran data: {len(data)} baris).', icon=":material/recommend:")
-                else:
-                    all_seq_options = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
-                    max_seq = max(5, min(180, len(data) // 3))
-                    valid_seq_options = [s for s in all_seq_options if s <= max_seq]
-                    if not valid_seq_options:
-                        valid_seq_options = [30]
-                    default_seq = 60 if 60 in valid_seq_options else (30 if 30 in valid_seq_options else valid_seq_options[-1])
-                    seq_length = st.select_slider(
-                        "Panjang Sekuens (Hari)",
-                        options=valid_seq_options,
-                        value=default_seq,
-                        key=f"seq_slider_yf_{len(data)}"
-                    )
-                    st.info(f'Rekomendasi Default: **{default_seq} Hari** (Disesuaikan otomatis sesuai ukuran data: {len(data)} hari).', icon=":material/recommend:")
+                all_seq_options = [3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180]
+                max_seq = max(3, min(180, len(data) // 3))
+                valid_seq_options = [s for s in all_seq_options if s <= max_seq]
+                if not valid_seq_options:
+                    valid_seq_options = [max(1, len(data) // 4)]
+                
+                default_seq = auto_seq_len if auto_seq_len in valid_seq_options else valid_seq_options[-1]
+                seq_length = st.select_slider(
+                    "Panjang Sekuens (Lookback Window) [Langkah Data]",
+                    options=valid_seq_options,
+                    value=default_seq,
+                    key=f"seq_slider_{is_cmc}_{len(data)}"
+                )
+                st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{default_seq} Langkah Data** (Disesuaikan otomatis untuk {len(data)} baris data).', icon=":material/recommend:")
                 st.warning('Ket: Sekuens terlalu pendek kehilangan konteks tren, sekuens terlalu panjang menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
 
             with st.popover("⚙️ Pengaturan Normalisasi (MinMaxScaler)"):
@@ -2886,21 +2899,41 @@ def main(stock, data_source="yfinance", api_key=""):
             st.subheader("Arsitektur Model & Pengaturan Hyperparameter:")
 
             with st.popover("⚙️ Pengaturan Lapisan Conv1D"):
-                conv_filters = st.select_slider("Jumlah Filter Conv1D", options=[16, 32, 48, 64, 96, 128, 256], value=64)
-                kernel_size = st.select_slider("Ukuran Kernel (Kernel Size)", options=[2, 3, 4, 5, 7], value=3)
+                conv_filters = st.select_slider(
+                    "Jumlah Filter Conv1D", 
+                    options=[16, 32, 48, 64, 96, 128, 256], 
+                    value=auto_conv_filters,
+                    key=f"conv_filters_{len(data)}"
+                )
+                kernel_size = st.select_slider(
+                    "Ukuran Kernel (Kernel Size)", 
+                    options=[2, 3, 4, 5, 7], 
+                    value=auto_kernel_size,
+                    key=f"kernel_size_{len(data)}"
+                )
                 conv_activation = st.selectbox("Fungsi Aktivasi Conv1D", options=["relu", "tanh", "elu", "linear"], index=0)
-                st.info('Rekomendasi Default: **64 filter**, **kernel 3**, aktivasi **ReLU** (Rentang Akurat: 32–64 filter, kernel 3–5).', icon=":material/recommend:")
+                st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{auto_conv_filters} filter**, **kernel {auto_kernel_size}**, aktivasi **ReLU**.', icon=":material/recommend:")
                 st.warning('Ket: Filter Conv1D mengekstrak fitur spasial & momentum lokal jangka pendek dari sekuens harga.', icon=":material/layers:")
 
             with st.popover("⚙️ Pengaturan Lapisan GRU"):
-                gru_units_1 = st.select_slider("Unit GRU Layer 1", options=[16, 32, 50, 64, 96, 128, 256], value=50)
-                gru_units_2 = st.select_slider("Unit GRU Layer 2", options=[16, 32, 50, 64, 96, 128, 256], value=50)
-                st.info('Rekomendasi Default: **50 Unit** per layer (Rentang Akurat: **32–64 Unit**).', icon=":material/recommend:")
+                gru_units_1 = st.select_slider(
+                    "Unit GRU Layer 1", 
+                    options=[16, 32, 48, 50, 64, 96, 128, 256], 
+                    value=auto_gru_1,
+                    key=f"gru1_{len(data)}"
+                )
+                gru_units_2 = st.select_slider(
+                    "Unit GRU Layer 2", 
+                    options=[16, 32, 48, 50, 64, 96, 128, 256], 
+                    value=auto_gru_2,
+                    key=f"gru2_{len(data)}"
+                )
+                st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{auto_gru_1} Unit** (Layer 1) & **{auto_gru_2} Unit** (Layer 2).', icon=":material/recommend:")
                 st.warning('Ket: GRU menangkap ketergantungan temporal jangka panjang. Nilai di atas 128 meningkatkan risiko overfitting pada deret waktu.', icon=":material/memory:")
 
             with st.popover("⚙️ Pengaturan Regularisasi Dropout"):
-                dropout_rate = st.select_slider("Tingkat Dropout (Dropout Rate)", options=[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5], value=0.2)
-                st.info('Rekomendasi Default: **0.2 (20%)** (Rentang Akurat: **0.1–0.3**).', icon=":material/recommend:")
+                dropout_rate = st.select_slider("Tingkat Dropout (Dropout Rate)", options=[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5], value=auto_dropout)
+                st.info(f'Rekomendasi Otomatis: **{auto_dropout} (20%)**.', icon=":material/recommend:")
                 st.warning('Ket: Dropout 0.2 mencegah ko-adaptasi neuron yang menyebabkan overfitting tanpa membuang representasi penting.', icon=":material/security:")
 
             def create_model(seq_len, c_filters, k_size, c_act, g_u1, g_u2, d_rate, lr=0.001):
@@ -2923,7 +2956,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 model.compile(optimizer=Adam(learning_rate=lr), loss='mse')
                 return model
 
-            preview_model = create_model(seq_length, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate)
+            preview_model = create_model(seq_length, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate, lr=auto_lr)
             try:
                 total_params = preview_model.count_params()
             except Exception:
@@ -2964,7 +2997,7 @@ def main(stock, data_source="yfinance", api_key=""):
                     })
                 st.dataframe(pd.DataFrame(layer_data), use_container_width=True)
 
-            def get_model(seq_len, lr=0.001):
+            def get_model(seq_len, lr=auto_lr):
                 return create_model(seq_len, conv_filters, kernel_size, conv_activation, gru_units_1, gru_units_2, dropout_rate, lr=lr)
 
             st.success("Perancangan Model CNN-GRU selesai!")
@@ -2986,35 +3019,37 @@ def main(stock, data_source="yfinance", api_key=""):
 
             # Hyperparameter Tuning popover
             with st.popover("⚙️ Pengaturan Epoch, Batch & Learning Rate"):
-                is_crypto = is_cmc or is_crypto_ticker(stock)
-                
-                if is_crypto:
-                    default_epoch = 100
-                    default_batch = 4
-                    default_lr = 0.0005
-                    acc_epoch_desc = "30–120 (Optimal Crypto: 80–120)"
-                    acc_batch_desc = "4–16 (Optimal Crypto: 4–8)"
-                    acc_lr_desc = "0.0001–0.001 (Optimal Crypto: 0.0003–0.0008)"
-                else:
-                    default_epoch = 50
-                    default_batch = 16
-                    default_lr = 0.001
-                    acc_epoch_desc = "30–100 (Optimal Saham: 40–60)"
-                    acc_batch_desc = "8–32 (Optimal Saham: 16–32)"
-                    acc_lr_desc = "0.0005–0.002 (Optimal Saham: 0.001)"
-
-                epochs = st.slider("Jumlah Epoch:", min_value=10, max_value=200, value=default_epoch, step=5)
-                batch_size = st.select_slider("Ukuran Batch (Batch Size):", options=[1, 2, 4, 8, 16, 32, 64, 128], value=default_batch)
+                epochs = st.slider(
+                    "Jumlah Epoch:", 
+                    min_value=10, 
+                    max_value=200, 
+                    value=auto_epoch, 
+                    step=5,
+                    key=f"epoch_slider_{len(data)}"
+                )
+                batch_size = st.select_slider(
+                    "Ukuran Batch (Batch Size):", 
+                    options=[1, 2, 4, 8, 16, 32, 64, 128], 
+                    value=auto_batch,
+                    key=f"batch_slider_{len(data)}"
+                )
                 
                 lr_options = [0.0001, 0.0003, 0.0005, 0.0008, 0.001, 0.002, 0.003, 0.005, 0.01]
-                lr_index = lr_options.index(default_lr) if default_lr in lr_options else 4
-                learning_rate = st.select_slider("Learning Rate (Adam Optimizer):", options=lr_options, value=lr_options[lr_index], format_func=lambda x: f"{x:.4f}")
+                lr_index = lr_options.index(auto_lr) if auto_lr in lr_options else 4
+                learning_rate = st.select_slider(
+                    "Learning Rate (Adam Optimizer):", 
+                    options=lr_options, 
+                    value=lr_options[lr_index], 
+                    format_func=lambda x: f"{x:.4f}",
+                    key=f"lr_slider_{len(data)}"
+                )
 
-                st.info(f"**Rekomendasi Parameter Optimal ({asset_type}):**\n"
-                        f"- Epoch Default: **{default_epoch}** (Rentang Akurat: **{acc_epoch_desc}**)\n"
-                        f"- Batch Size Default: **{default_batch}** (Rentang Akurat: **{acc_batch_desc}**)\n"
-                        f"- Learning Rate Default: **{default_lr}** (Rentang Akurat: **{acc_lr_desc}**)", icon=":material/recommend:")
-                st.warning("Ket: Batch size kecil (4-8) sangat efektif untuk menangkap volatilitas kripto, sedangkan batch moderat (16-32) lebih stabil untuk saham konvensional.", icon=":material/insights:")
+                st.info(f"⚡ **Konfigurasi Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):**\n"
+                        f"- Kategori Dataset: **{dataset_category_desc}**\n"
+                        f"- Epoch Otomatis: **{auto_epoch} Epoch**\n"
+                        f"- Batch Size Otomatis: **{auto_batch}**\n"
+                        f"- Learning Rate Otomatis: **{auto_lr:.4f}**", icon=":material/auto_awesome:")
+                st.warning("Ket: Untuk data ratusan sampel (<1000 data), 50 epoch, batch 32, dan lr 0.0010 mencegah overfitting dan mempercepat konvergensi. Untuk ribuan data intraday (>=1000 data), 100 epoch, batch 4, dan lr 0.0005 menangkap dinamika mikro-struktur harga dengan sangat detail.", icon=":material/insights:")
 
             # Forecasting Options
             def get_cmc_forecast_options():
