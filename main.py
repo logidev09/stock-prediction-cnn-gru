@@ -161,6 +161,24 @@ def get_cmc_api_key_from_env_or_secrets():
     import os
     return os.environ.get("CMC_API_KEY", "")
 
+PLOTLY_CHART_CONFIG = {
+    'scrollZoom': True,
+    'displayModeBar': True,
+    'displaylogo': False,
+    'modeBarButtonsToAdd': [
+        'drawline', 'drawopenpath', 'drawcircle', 'drawrect', 'eraseshape'
+    ],
+    'toImageButtonOptions': {
+        'format': 'png',
+        'scale': 2
+    }
+}
+
+def render_plotly_with_tools(fig, key=None):
+    if fig is None:
+        return
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CHART_CONFIG, key=key)
+
 def format_timestamp_for_plot(dt):
     try:
         dt_p = pd.to_datetime(dt)
@@ -174,34 +192,51 @@ def get_time_change_pct(df, delta):
     if df is None or df.empty or len(df) < 2:
         return None
     try:
-        now_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
-        target_dt = now_dt - delta
+        last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
+        total_span_sec = (last_dt - first_dt).total_seconds()
+        req_sec = delta.total_seconds()
+        
+        # Jika durasi data yang tersedia tidak mencapai 70% dari target lookback, jangan tampilkan data (null)
+        if total_span_sec < (req_sec * 0.7):
+            return None
+            
+        target_dt = last_dt - delta
         dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
         sub = df[dates <= target_dt]
         if not sub.empty:
             past_val = safe_float(sub['Close'].iloc[-1])
         else:
-            past_val = safe_float(df['Close'].iloc[0])
+            return None
+            
         now_val = safe_float(df['Close'].iloc[-1])
         if past_val > 0:
             return ((now_val - past_val) / past_val) * 100.0
-        return 0.0
+        return None
     except Exception:
         return None
 
 def get_time_period_slice(df, delta):
-    if df is None or df.empty:
+    if df is None or df.empty or len(df) < 2:
         return pd.DataFrame()
     try:
-        now_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
-        target_dt = now_dt - delta
+        last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
+        total_span_sec = (last_dt - first_dt).total_seconds()
+        req_sec = delta.total_seconds()
+        
+        # Jika durasi data yang tersedia tidak mencapai 70% dari target lookback, jangan tampilkan grafik mini
+        if total_span_sec < (req_sec * 0.7):
+            return pd.DataFrame()
+            
+        target_dt = last_dt - delta
         dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
         sub = df[dates >= target_dt].copy()
         if len(sub) >= 2:
             return sub
-        return df.tail(min(len(df), 30))
+        return pd.DataFrame()
     except Exception:
-        return df
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def fetch_coinmarketcap_data(symbol, api_key="", interval="1m", count=1000):
@@ -310,36 +345,49 @@ def get_change_pct(df, days_lookback):
     if df is None or len(df) < 2:
         return None
     try:
-        curr_price = safe_float(df['Close'].iloc[-1])
         last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
-        target_dt = last_dt - pd.Timedelta(days=days_lookback)
+        first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
+        total_span_days = (last_dt - first_dt).total_seconds() / 86400.0
         
+        # Jika durasi data yang tersedia tidak mencapai 70% dari lookback hari, jangan tampilkan (null)
+        if days_lookback > 1 and total_span_days < (days_lookback * 0.7):
+            return None
+            
+        target_dt = last_dt - pd.Timedelta(days=days_lookback)
         dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
         sub_df = df[dates <= target_dt]
         if not sub_df.empty:
             past_price = safe_float(sub_df['Close'].iloc[-1])
         else:
-            past_price = safe_float(df['Close'].iloc[0])
+            return None
         
+        curr_price = safe_float(df['Close'].iloc[-1])
         if past_price > 0:
-            return ((curr_price - past_price) / past_price) * 100
+            return ((curr_price - past_price) / past_price) * 100.0
         return None
     except Exception:
         return None
 
 def get_period_slice(df, days):
-    if df is None or df.empty:
+    if df is None or df.empty or len(df) < 2:
         return pd.DataFrame()
     try:
         last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
+        first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
+        total_span_days = (last_dt - first_dt).total_seconds() / 86400.0
+        
+        # Jika durasi data tidak mencukupi, jangan tampilkan grafik
+        if days > 1 and total_span_days < (days * 0.7):
+            return pd.DataFrame()
+            
         start_dt = last_dt - pd.Timedelta(days=days)
         dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
         sub = df[dates >= start_dt].copy()
-        if len(sub) < 2 and len(df) >= 2:
-            return df.tail(min(len(df), max(2, min(days, 30))))
-        return sub
+        if len(sub) >= 2:
+            return sub
+        return pd.DataFrame()
     except Exception:
-        return df.tail(min(len(df), max(2, min(days, 30))))
+        return pd.DataFrame()
 
 def render_coinmarketcap_mini_metrics(quick_df, symbol):
     if quick_df is None or quick_df.empty or len(quick_df) < 2:
@@ -349,26 +397,26 @@ def render_coinmarketcap_mini_metrics(quick_df, symbol):
     c_prev = safe_float(quick_df['Close'].iloc[-2])
     
     chg_1m = ((c_now - c_prev) / c_prev) * 100.0 if c_prev > 0 else 0.0
+    chg_3m = get_time_change_pct(quick_df, timedelta(minutes=3))
     chg_5m = get_time_change_pct(quick_df, timedelta(minutes=5))
+    chg_15m = get_time_change_pct(quick_df, timedelta(minutes=15))
     chg_30m = get_time_change_pct(quick_df, timedelta(minutes=30))
     chg_1h = get_time_change_pct(quick_df, timedelta(hours=1))
+    chg_2h = get_time_change_pct(quick_df, timedelta(hours=2))
+    chg_4h = get_time_change_pct(quick_df, timedelta(hours=4))
     chg_12h = get_time_change_pct(quick_df, timedelta(hours=12))
     chg_1d = get_time_change_pct(quick_df, timedelta(days=1))
-    chg_1w = get_time_change_pct(quick_df, timedelta(days=7))
-    chg_1mo = get_time_change_pct(quick_df, timedelta(days=30))
-    chg_90d = get_time_change_pct(quick_df, timedelta(days=90))
-    chg_ytd = get_time_change_pct(quick_df, timedelta(days=365))
     
     st.markdown(f"**Performa Perubahan Harga {symbol} (CoinMarketCap):**")
     
-    # Baris 1: Intraday (1m, 5m, 30m, 1H, 12H)
+    # Baris 1: Intraday Menit (1m, 3m, 5m, 15m, 30m)
     r1_cols = st.columns(5)
     metrics_r1 = [
         (r1_cols[0], "1 Menit (1m)", chg_1m),
-        (r1_cols[1], "5 Menit (5m)", chg_5m),
-        (r1_cols[2], "30 Menit (30m)", chg_30m),
-        (r1_cols[3], "1 Jam (1H)", chg_1h),
-        (r1_cols[4], "12 Jam (12H)", chg_12h)
+        (r1_cols[1], "3 Menit (3m)", chg_3m),
+        (r1_cols[2], "5 Menit (5m)", chg_5m),
+        (r1_cols[3], "15 Menit (15m)", chg_15m),
+        (r1_cols[4], "30 Menit (30m)", chg_30m)
     ]
     for col, label, val in metrics_r1:
         with col:
@@ -391,14 +439,14 @@ def render_coinmarketcap_mini_metrics(quick_df, symbol):
                 </div>
                 """, unsafe_allow_html=True)
                 
-    # Baris 2: Horizon Lebih Panjang (1D, 1W, 1M, 90D, YTD)
+    # Baris 2: Intraday Jam & Harian (1H, 2H, 4H, 12H, 1D)
     r2_cols = st.columns(5)
     metrics_r2 = [
-        (r2_cols[0], "1 Hari (1D)", chg_1d),
-        (r2_cols[1], "1 Minggu (1W)", chg_1w),
-        (r2_cols[2], "1 Bulan (1M)", chg_1mo),
-        (r2_cols[3], "90 Hari (90D)", chg_90d),
-        (r2_cols[4], "1 Tahun (YTD)", chg_ytd)
+        (r2_cols[0], "1 Jam (1H)", chg_1h),
+        (r2_cols[1], "2 Jam (2H)", chg_2h),
+        (r2_cols[2], "4 Jam (4H)", chg_4h),
+        (r2_cols[3], "12 Jam (12H)", chg_12h),
+        (r2_cols[4], "1 Hari (1D)", chg_1d)
     ]
     for col, label, val in metrics_r2:
         with col:
@@ -1387,8 +1435,8 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.07,
-        row_heights=[0.50, 0.25, 0.25],
+        vertical_spacing=0.10,
+        row_heights=[0.46, 0.27, 0.27],
         specs=[
             [{"secondary_y": False}],
             [{"secondary_y": True}],
@@ -1650,14 +1698,14 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
                 x=[dates[vol_max_idx]], y=[vol_arr[vol_max_idx]], mode='markers+text', name='Volume Tertinggi',
                 marker=dict(color='#00C853', size=8, symbol='triangle-up'),
                 text=[f"▲ Vol High: {vol_arr[vol_max_idx]:,.0f}"],
-                textposition="top center", textfont=dict(color='#00C853', size=10),
+                textposition="top left", textfont=dict(color='#00C853', size=10),
                 hoverinfo='skip', showlegend=False
             ), row=2, col=1, secondary_y=False)
             fig.add_trace(go.Scatter(
                 x=[dates[vol_min_idx]], y=[vol_arr[vol_min_idx]], mode='markers+text', name='Volume Terendah',
                 marker=dict(color='#D50000', size=8, symbol='triangle-down'),
                 text=[f"▼ Vol Low: {vol_arr[vol_min_idx]:,.0f}"],
-                textposition="bottom center", textfont=dict(color='#D50000', size=10),
+                textposition="top right", textfont=dict(color='#D50000', size=10),
                 hoverinfo='skip', showlegend=False
             ), row=2, col=1, secondary_y=False)
         
@@ -1689,14 +1737,14 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
                 x=[dates[atr_max_idx]], y=[atr_arr[atr_max_idx]], mode='markers+text', name='ATR Tertinggi',
                 marker=dict(color='#FFB300', size=8, symbol='triangle-up'),
                 text=[f"▲ ATR High: {smart_format(atr_arr[atr_max_idx], prefix=curr_prefix)}"],
-                textposition="top center", textfont=dict(color='#FFB300', size=10),
+                textposition="top right", textfont=dict(color='#FFB300', size=10),
                 hoverinfo='skip', showlegend=False
             ), row=2, col=1, secondary_y=True)
             fig.add_trace(go.Scatter(
                 x=[dates[atr_min_idx]], y=[atr_arr[atr_min_idx]], mode='markers+text', name='ATR Terendah',
                 marker=dict(color='#FF6D00', size=8, symbol='triangle-down'),
                 text=[f"▼ ATR Low: {smart_format(atr_arr[atr_min_idx], prefix=curr_prefix)}"],
-                textposition="bottom center", textfont=dict(color='#FF6D00', size=10),
+                textposition="top left", textfont=dict(color='#FF6D00', size=10),
                 hoverinfo='skip', showlegend=False
             ), row=2, col=1, secondary_y=True)
         
@@ -1753,20 +1801,52 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
                 hoverinfo='skip', showlegend=False
             ), row=3, col=1)
         
+    # ----------------------------------------------------
+    # Layout & Y-Axes Padding Settings (Fixes all text clipping)
+    # ----------------------------------------------------
     fig.update_layout(
-        title=dict(text=title, font=dict(size=15, color='#222'), y=0.98, x=0.5, xanchor='center', yanchor='top'),
+        title=dict(text=title, font=dict(size=15, color='#222'), y=0.985, x=0.5, xanchor='center', yanchor='top'),
         hovermode='x unified',
-        margin=dict(l=40, r=40, t=80, b=40),
+        margin=dict(l=60, r=60, t=80, b=50),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         template='plotly_white',
-        height=740,
+        height=980,
         showlegend=True,
         xaxis_rangeslider_visible=False
     )
-    fig.update_yaxes(title_text=f"Harga {asset_type}", row=1, col=1)
-    fig.update_yaxes(title_text="Volume", row=2, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="ATR", row=2, col=1, secondary_y=True)
-    fig.update_yaxes(title_text="Net Delta", row=3, col=1)
+    
+    # 1. Padding Row 1 (Candlestick & VPVR)
+    p_min = float(np.min(low_arr))
+    p_max = float(np.max(high_arr))
+    p_span = (p_max - p_min) if p_max > p_min else (p_max * 0.05 if p_max > 0 else 1.0)
+    fig.update_yaxes(title_text=f"Harga {asset_type}", range=[max(0.0, p_min - p_span * 0.18), p_max + p_span * 0.18], row=1, col=1)
+    
+    # 2. Padding Row 2 (Volume & ATR)
+    if len(vol_arr) > 0 and not np.all(vol_arr == 0):
+        v_max = float(np.max(vol_arr))
+        fig.update_yaxes(title_text="Volume", range=[0, v_max * 1.55 if v_max > 0 else 1.0], row=2, col=1, secondary_y=False)
+    else:
+        fig.update_yaxes(title_text="Volume", row=2, col=1, secondary_y=False)
+        
+    if len(atr_arr) == n:
+        a_min = float(np.min(atr_arr))
+        a_max = float(np.max(atr_arr))
+        a_span = (a_max - a_min) if a_max > a_min else (a_max * 0.1 if a_max > 0 else 1.0)
+        fig.update_yaxes(title_text="ATR", range=[max(0.0, a_min - a_span * 0.35), a_max + a_span * 0.50], row=2, col=1, secondary_y=True)
+    else:
+        fig.update_yaxes(title_text="ATR", row=2, col=1, secondary_y=True)
+        
+    # 3. Padding Row 3 (Delta Volume)
+    if len(delta_vol) > 0:
+        d_min = float(np.min(delta_vol))
+        d_max = float(np.max(delta_vol))
+        d_span = max(abs(d_min), abs(d_max))
+        if d_span == 0:
+            d_span = 1.0
+        fig.update_yaxes(title_text="Net Delta", range=[d_min - d_span * 0.50, d_max + d_span * 0.50], row=3, col=1)
+    else:
+        fig.update_yaxes(title_text="Net Delta", row=3, col=1)
+        
     fig.update_xaxes(title_text="Waktu / Tanggal", row=3, col=1)
     return fig
 
@@ -2162,17 +2242,20 @@ def main(stock, data_source="yfinance", api_key=""):
             tot_diff_f = c_end_f - c_start_f
             diff_sign_f = "+" if tot_diff_f >= 0 else ""
             tot_diff_str_f = smart_format(tot_diff_f, prefix=curr_prefix)
+            full_chart_color = '#00C853' if tot_chg_f >= 0 else '#D50000'
             st.markdown(f"**Performa Perubahan Keseluruhan Data:** {tot_sign_f} (`{diff_sign_f}{tot_diff_str_f}`)")
+        else:
+            full_chart_color = '#00C853'
 
-        # Plot Interaktif dengan Plotly untuk data keseluruhan
-        fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', '#31333F', curr_prefix=curr_prefix)
+        # Plot Interaktif dengan Plotly untuk data keseluruhan (Warna dinamis Hijau Naik / Merah Turun)
+        fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', full_chart_color, curr_prefix=curr_prefix)
         if fig1 is not None:
-            st.plotly_chart(fig1, use_container_width=True, key="fig_full_data_history")
+            render_plotly_with_tools(fig1, key="fig_full_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
             fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
             if fig_full_comp is not None:
-                st.plotly_chart(fig_full_comp, use_container_width=True, key="fig_full_data_comp_indicators")
+                render_plotly_with_tools(fig_full_comp, key="fig_full_data_comp_indicators")
 
         with st.popover("Tampilkan Semua Data"):
             st.write(format_df_for_display(full_data))
@@ -2189,33 +2272,59 @@ def main(stock, data_source="yfinance", api_key=""):
         st.subheader("Pengaturan Data Pelatihan")
 
         if is_cmc:
-            st.markdown("Pilih durasi data historis yang digunakan untuk melatih model (Tahun, Bulan, Hari, Jam, Menit, Detik):")
-            c_sl1, c_sl2 = st.columns(2)
-            with c_sl1:
-                years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30, help="Pilihan tahun data historis (Default 30 Tahun)")
-                months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0, help="Pilihan bulan data tambahan")
-                days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0, help="Pilihan hari data tambahan")
-            with c_sl2:
-                hours_ago = st.slider('⏰ Jam (0 - 23):', 0, 23, 0, help="Pilihan jam data tambahan")
-                mins_ago = st.slider('⏱️ Menit (0 - 59):', 0, 59, 0, help="Pilihan menit data tambahan")
-                secs_ago = st.slider('⏲️ Detik (0 - 59):', 0, 59, 0, help="Pilihan detik data tambahan")
-            
-            total_days = (years_ago * 365) + (months_ago * 30) + days_ago
-            total_duration = timedelta(days=total_days, hours=hours_ago, minutes=mins_ago, seconds=secs_ago)
-            if total_duration.total_seconds() < 1800: # minimal 30 menit
-                total_duration = timedelta(minutes=30)
-                
-            if years_ago >= 30 and months_ago == 0 and days_ago == 0 and hours_ago == 0 and mins_ago == 0 and secs_ago == 0:
-                data = full_data.copy()
-            else:
+            selected_cmc_method = st.radio(
+                "Pilihan Metode Memilih Data Pelatihan (CoinMarketCap):",
+                options=[
+                    "Gunakan Jumlah Hari Terakhir",
+                    "Gunakan Jumlah Jam / Menit Terakhir",
+                    "Rentang Tahun / Bulan / Hari"
+                ],
+                index=0
+            )
+
+            if selected_cmc_method == "Gunakan Jumlah Hari Terakhir":
+                max_avail_days = max(1, (full_data.index[-1] - full_data.index[0]).days) if not full_data.empty else 30
+                default_days = min(30, max_avail_days)
+                input_days = st.number_input("📅 Jumlah Hari Terakhir untuk Pelatihan:", min_value=1, max_value=365*30, value=default_days, step=1)
+                total_duration = timedelta(days=input_days)
+                duration_str = f"{input_days} Hari"
+                days = input_days
+
+            elif selected_cmc_method == "Gunakan Jumlah Jam / Menit Terakhir":
+                c_jm1, c_jm2 = st.columns(2)
+                with c_jm1:
+                    input_hours = st.number_input("⏰ Jam Terakhir:", min_value=0, max_value=24*365, value=24, step=1)
+                with c_jm2:
+                    input_mins = st.number_input("⏱️ Menit Tambahan:", min_value=0, max_value=59, value=0, step=1)
+                total_duration = timedelta(hours=input_hours, minutes=input_mins)
+                if total_duration.total_seconds() < 1800:
+                    total_duration = timedelta(minutes=30)
+                duration_str = f"{input_hours} Jam {input_mins} Menit"
+                days = max(1, total_duration.days)
+
+            else: # "Rentang Tahun / Bulan / Hari"
+                c_yr1, c_yr2, c_yr3 = st.columns(3)
+                with c_yr1:
+                    input_yr = st.number_input("📅 Tahun:", min_value=0, max_value=30, value=1, step=1)
+                with c_yr2:
+                    input_mo = st.number_input("📅 Bulan:", min_value=0, max_value=11, value=0, step=1)
+                with c_yr3:
+                    input_dy = st.number_input("📅 Hari:", min_value=0, max_value=30, value=0, step=1)
+                total_days = (input_yr * 365) + (input_mo * 30) + input_dy
+                if total_days <= 0:
+                    total_days = 30
+                total_duration = timedelta(days=total_days)
+                duration_str = f"{input_yr} Tahun {input_mo} Bulan {input_dy} Hari"
+                days = total_days
+
+            if not full_data.empty:
                 last_ts = full_data.index[-1]
                 start_ts = last_ts - total_duration
                 data = full_data[full_data.index >= start_ts].copy()
                 if len(data) < 30:
                     data = full_data.tail(min(len(full_data), 120)).copy()
-            days = total_days
-            
-            duration_str = f"{years_ago} Tahun {months_ago} Bulan {days_ago} Hari {hours_ago} Jam {mins_ago} Menit {secs_ago} Detik"
+            else:
+                data = full_data.copy()
 
         else:
             use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
@@ -2237,9 +2346,13 @@ def main(stock, data_source="yfinance", api_key=""):
             )
 
             if selected_method == "Rentang Tahun / Bulan / Hari":
-                years_ago = st.slider('Pilih berapa tahun yang lalu untuk pelatihan:', 0, 30, 30)
-                months_ago = st.slider('Pilih berapa bulan tambahan yang lalu untuk pelatihan:', 0, 11, 0)
-                days_ago = st.slider('Pilih berapa hari tambahan yang lalu untuk pelatihan:', 0, 30, 0)
+                c_yf1, c_yf2, c_yf3 = st.columns(3)
+                with c_yf1:
+                    years_ago = st.number_input('📅 Tahun yang lalu:', min_value=0, max_value=30, value=30, step=1)
+                with c_yf2:
+                    months_ago = st.number_input('📅 Bulan tambahan:', min_value=0, max_value=11, value=0, step=1)
+                with c_yf3:
+                    days_ago = st.number_input('📅 Hari tambahan:', min_value=0, max_value=30, value=0, step=1)
                 
                 days = (years_ago * 365) + (months_ago * 30) + days_ago
                 if days < 120:
@@ -2248,7 +2361,7 @@ def main(stock, data_source="yfinance", api_key=""):
 
             elif selected_method == "Gunakan Jumlah Hari Terakhir":
                 default_val = 365 * 30
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val)
+                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val, step=1)
                 start_date_obj = end_date_obj - timedelta(days=days)
 
             else: # "Pilih Tanggal dengan Kalender"
@@ -2320,29 +2433,29 @@ def main(stock, data_source="yfinance", api_key=""):
         # Plot Interaktif dengan Plotly untuk data pelatihan (Garis Kuning)
         fig_train = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#D6C36B', curr_prefix=curr_prefix)
         if fig_train is not None:
-            st.plotly_chart(fig_train, use_container_width=True, key="fig_train_data_history")
+            render_plotly_with_tools(fig_train, key="fig_train_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
             fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
             if fig_train_comp is not None:
-                st.plotly_chart(fig_train_comp, use_container_width=True, key="fig_train_data_comp_indicators")
+                render_plotly_with_tools(fig_train_comp, key="fig_train_data_comp_indicators")
 
         # Toggle Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta
-        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
+        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
         with st.expander(expander_title, expanded=False):
             if not data.empty:
                 if is_cmc:
                     period_slices = [
                         ("1m", get_time_period_slice(data, timedelta(minutes=1)), get_time_change_pct(data, timedelta(minutes=1))),
+                        ("3m", get_time_period_slice(data, timedelta(minutes=3)), get_time_change_pct(data, timedelta(minutes=3))),
                         ("5m", get_time_period_slice(data, timedelta(minutes=5)), get_time_change_pct(data, timedelta(minutes=5))),
+                        ("15m", get_time_period_slice(data, timedelta(minutes=15)), get_time_change_pct(data, timedelta(minutes=15))),
                         ("30m", get_time_period_slice(data, timedelta(minutes=30)), get_time_change_pct(data, timedelta(minutes=30))),
                         ("1H", get_time_period_slice(data, timedelta(hours=1)), get_time_change_pct(data, timedelta(hours=1))),
+                        ("2H", get_time_period_slice(data, timedelta(hours=2)), get_time_change_pct(data, timedelta(hours=2))),
+                        ("4H", get_time_period_slice(data, timedelta(hours=4)), get_time_change_pct(data, timedelta(hours=4))),
                         ("12H", get_time_period_slice(data, timedelta(hours=12)), get_time_change_pct(data, timedelta(hours=12))),
-                        ("1D", get_time_period_slice(data, timedelta(days=1)), get_time_change_pct(data, timedelta(days=1))),
-                        ("1W", get_time_period_slice(data, timedelta(days=7)), get_time_change_pct(data, timedelta(days=7))),
-                        ("1M", get_time_period_slice(data, timedelta(days=30)), get_time_change_pct(data, timedelta(days=30))),
-                        ("90D", get_time_period_slice(data, timedelta(days=90)), get_time_change_pct(data, timedelta(days=90))),
-                        ("YTD", get_time_period_slice(data, timedelta(days=365)), get_time_change_pct(data, timedelta(days=365)))
+                        ("1D", get_time_period_slice(data, timedelta(days=1)), get_time_change_pct(data, timedelta(days=1)))
                     ]
                 else:
                     period_slices = [
@@ -2359,20 +2472,18 @@ def main(stock, data_source="yfinance", api_key=""):
                 for idx, (label, s_df, chg) in enumerate(period_slices):
                     col = cols_price[idx % 5]
                     with col:
-                        c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
-                        mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
-                        mean_c_str = smart_format(mean_c, prefix=curr_prefix)
-                        if chg is not None:
+                        if chg is not None and not s_df.empty and len(s_df) >= 2:
+                            c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
+                            mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
+                            mean_c_str = smart_format(mean_c, prefix=curr_prefix)
                             badge_sign = f":green[▲ +{chg:.2f}%]" if chg >= 0 else f":red[▼ {chg:.2f}%]"
-                        else:
-                            badge_sign = "-"
-                        st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
-                        if not s_df.empty and ('Close' in s_df.columns or len(s_df) > 0):
-                            is_pos = (chg >= 0) if chg is not None else True
+                            st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
+                            is_pos = (chg >= 0)
                             fig = render_sparkline_chart(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0], is_positive=is_pos, chart_type='line', fill=True)
                             st.pyplot(fig)
                             plt.close(fig)
                         else:
+                            st.markdown(f"<small><b>{label}</b> (-)<br>Rata2: <code>-</code></small>", unsafe_allow_html=True)
                             st.write("-")
                             
                 # 2. Baris Chart Volume Transaksi Disatukan dengan Garis ATR (Kuning)
@@ -2381,23 +2492,27 @@ def main(stock, data_source="yfinance", api_key=""):
                 for idx, (label, s_df, chg) in enumerate(period_slices):
                     col = cols_vol_atr[idx % 5]
                     with col:
-                        vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
-                        if len(vol_arr) >= 2 and vol_arr[0] > 0:
-                            v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
-                            v_badge = f":green[▲ +{v_chg:.1f}%]" if v_chg >= 0 else f":red[▼ {v_chg:.1f}%]"
+                        if chg is not None and not s_df.empty and len(s_df) >= 2:
+                            vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
+                            if len(vol_arr) >= 2 and vol_arr[0] > 0:
+                                v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
+                                v_badge = f":green[▲ +{v_chg:.1f}%]" if v_chg >= 0 else f":red[▼ {v_chg:.1f}%]"
+                            else:
+                                v_badge = "-"
+                            
+                            atr_arr = calculate_atr_series(s_df)
+                            latest_atr_str = smart_format(atr_arr[-1], prefix=curr_prefix) if len(atr_arr) > 0 else "-"
+                            
+                            st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
+                            if not s_df.empty and 'Volume' in s_df.columns:
+                                bar_cols = get_bar_colors_for_volume(s_df)
+                                fig = render_combined_volume_atr_sparkline(s_df['Volume'], atr_arr, bar_colors=bar_cols)
+                                st.pyplot(fig)
+                                plt.close(fig)
+                            else:
+                                st.write("-")
                         else:
-                            v_badge = "-"
-                        
-                        atr_arr = calculate_atr_series(s_df)
-                        latest_atr_str = smart_format(atr_arr[-1], prefix=curr_prefix) if len(atr_arr) > 0 else "-"
-                        
-                        st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
-                        if not s_df.empty and 'Volume' in s_df.columns:
-                            bar_cols = get_bar_colors_for_volume(s_df)
-                            fig = render_combined_volume_atr_sparkline(s_df['Volume'], atr_arr, bar_colors=bar_cols)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
+                            st.markdown(f"<small><b>Vol {label}</b> (-)<br>ATR: -</small>", unsafe_allow_html=True)
                             st.write("-")
 
                 # 3. Baris Chart Delta Volume Harian (Bar Hijau Net Buy & Merah Net Sell)
@@ -2406,20 +2521,24 @@ def main(stock, data_source="yfinance", api_key=""):
                 for idx, (label, s_df, chg) in enumerate(period_slices):
                     col = cols_delta[idx % 5]
                     with col:
-                        daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
-                        if len(daily_delta) > 0:
-                            net_delta = np.sum(daily_delta)
-                            d_pos = net_delta >= 0
-                            d_badge = f":green[▲ +{format_market_cap(net_delta)} Net Buy]" if d_pos else f":red[▼ -{format_market_cap(abs(net_delta))} Net Sell]"
+                        if chg is not None and not s_df.empty and len(s_df) >= 2:
+                            daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
+                            if len(daily_delta) > 0:
+                                net_delta = np.sum(daily_delta)
+                                d_pos = net_delta >= 0
+                                d_badge = f":green[▲ +{format_market_cap(net_delta)} Net Buy]" if d_pos else f":red[▼ -{format_market_cap(abs(net_delta))} Net Sell]"
+                            else:
+                                d_pos = True
+                                d_badge = "-"
+                            st.markdown(f"<small><b>Delta {label}</b><br>{d_badge}</small>", unsafe_allow_html=True)
+                            if len(daily_delta) > 0:
+                                fig = render_sparkline_chart(daily_delta, is_positive=d_pos, chart_type='bar', bar_colors=daily_delta_cols)
+                                st.pyplot(fig)
+                                plt.close(fig)
+                            else:
+                                st.write("-")
                         else:
-                            d_pos = True
-                            d_badge = "-"
-                        st.markdown(f"<small><b>Delta {label}</b><br>{d_badge}</small>", unsafe_allow_html=True)
-                        if len(daily_delta) > 0:
-                            fig = render_sparkline_chart(daily_delta, is_positive=d_pos, chart_type='bar', bar_colors=daily_delta_cols)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
+                            st.markdown(f"<small><b>Delta {label}</b><br>-</small>", unsafe_allow_html=True)
                             st.write("-")
 
         with st.popover("Tampilkan Semua Data Pelatihan"):
@@ -2667,7 +2786,6 @@ def main(stock, data_source="yfinance", api_key=""):
             # Forecasting Options
             def get_cmc_forecast_options():
                 return [
-                    ("1 Detik (1s)", 1),
                     ("1 Menit (1m)", 1),
                     ("3 Menit (3m)", 3),
                     ("5 Menit (5m)", 5),
@@ -2903,13 +3021,13 @@ def main(stock, data_source="yfinance", api_key=""):
                 # Plot Interaktif Evaluasi
                 fig_eval = plot_interactive_evaluation(actual_dates, y_test_original, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
                 if fig_eval is not None:
-                    st.plotly_chart(fig_eval, use_container_width=True, key="fig_eval_chart")
+                    render_plotly_with_tools(fig_eval, key="fig_eval_chart")
 
                 with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pengujian)", expanded=False):
                     test_df = data.iloc[-len(y_test):]
                     fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
                     if fig_eval_comp is not None:
-                        st.plotly_chart(fig_eval_comp, use_container_width=True, key="fig_eval_comp_indicators")
+                        render_plotly_with_tools(fig_eval_comp, key="fig_eval_comp_indicators")
 
                 with st.popover("Tampilkan Data Pengujian & Hasil Prediksi Uji"):
                     eval_df = pd.DataFrame({
@@ -3033,13 +3151,13 @@ def main(stock, data_source="yfinance", api_key=""):
                         curr_prefix=curr_prefix
                     )
                     if fig_fc is not None:
-                        st.plotly_chart(fig_fc, use_container_width=True, key=f"fig_forecast_{forecast_period}_{i}")
+                        render_plotly_with_tools(fig_fc, key=f"fig_forecast_{forecast_period}_{i}")
 
                     with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
                         fc_slice_df = data.iloc[start_idx:]
                         fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
                         if fig_fc_comp is not None:
-                            st.plotly_chart(fig_fc_comp, use_container_width=True, key=f"fig_forecast_comp_{forecast_period}_{i}")
+                            render_plotly_with_tools(fig_fc_comp, key=f"fig_forecast_comp_{forecast_period}_{i}")
 
                     last_actual_price = safe_float(data['Close'].iloc[-1])
                     last_test_price = safe_float(y_pred[-1]) if (len(y_pred) > 0) else last_actual_price
