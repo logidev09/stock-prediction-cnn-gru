@@ -2271,109 +2271,327 @@ def main(stock, data_source="yfinance", api_key=""):
         # DATA PELATIHAN
         st.subheader("Pengaturan Data Pelatihan")
 
+        # Map durasi preset (Tombol & Radiobox Cepat)
+        PRESET_DURATIONS = {
+            "1 m": timedelta(minutes=1),
+            "3 m": timedelta(minutes=3),
+            "5 m": timedelta(minutes=5),
+            "15 m": timedelta(minutes=15),
+            "30 m": timedelta(minutes=30),
+            "1 H": timedelta(hours=1),
+            "4 H": timedelta(hours=4),
+            "1 D": timedelta(days=1),
+            "1 W": timedelta(days=7),
+            "1 M": timedelta(days=30),
+            "90 D": timedelta(days=90),
+            "YTD": timedelta(days=365),
+            "2 T": timedelta(days=365*2),
+            "3 T": timedelta(days=365*3),
+            "4 T": timedelta(days=365*4),
+            "5 T": timedelta(days=365*5),
+            "10 T": timedelta(days=365*10),
+            "30 T": timedelta(days=365*30)
+        }
+
+        END_TIME_OFFSETS = [
+            ("1 m", timedelta(minutes=1)),
+            ("3 m", timedelta(minutes=3)),
+            ("5 m", timedelta(minutes=5)),
+            ("15 m", timedelta(minutes=15)),
+            ("30 m", timedelta(minutes=30)),
+            ("1 H", timedelta(hours=1)),
+            ("4 H", timedelta(hours=4)),
+            ("1 D", timedelta(days=1)),
+            ("1 W", timedelta(days=7)),
+            ("1 M", timedelta(days=30)),
+            ("90 D", timedelta(days=90)),
+            ("YTD", timedelta(days=365))
+        ]
+
         if is_cmc:
+            if 'cmc_end_offset_btn' not in st.session_state:
+                st.session_state.cmc_end_offset_btn = None
+            if 'cmc_preset_selected' not in st.session_state:
+                st.session_state.cmc_preset_selected = "30 T"
+
+            # 1. Pilihan Tanggal / Waktu Selesai (Hari ini / Uncheck Kalender & Tombol)
+            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_cmc")
+            latest_avail_dt = full_data.index[-1] if not full_data.empty else pd.Timestamp.now()
+
+            if use_today_end:
+                end_datetime = latest_avail_dt
+                st.session_state.cmc_end_offset_btn = None
+            else:
+                st.markdown("**Pilih Tanggal / Waktu Selesai (Data Historis):**")
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir:</b></small>", unsafe_allow_html=True)
+                
+                # Tombol Cepat Titik Akhir (1m - YTD)
+                btn_cols_1 = st.columns(6)
+                btn_cols_2 = st.columns(6)
+                for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
+                    with btn_cols_1[b_i]:
+                        if st.button(t_lbl, key=f"btn_end_cmc_{t_lbl}", use_container_width=True):
+                            st.session_state.cmc_end_offset_btn = t_lbl
+                for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[6:]):
+                    with btn_cols_2[b_i]:
+                        if st.button(t_lbl, key=f"btn_end_cmc_{t_lbl}", use_container_width=True):
+                            st.session_state.cmc_end_offset_btn = t_lbl
+
+                selected_end_offset = st.session_state.cmc_end_offset_btn
+                if selected_end_offset:
+                    offset_dict = dict(END_TIME_OFFSETS)
+                    delta_val = offset_dict.get(selected_end_offset, timedelta(0))
+                    end_datetime = latest_avail_dt - delta_val
+                    st.info(f"📍 Titik Akhir Terpilih via Tombol: **{selected_end_offset} yang lalu** (Per: `{format_timestamp_for_plot(end_datetime)}`).")
+                else:
+                    default_end_d = latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today()
+                    end_date_selected = st.date_input(
+                        "📅 Tanggal Selesai Pelatihan (Kalender):",
+                        value=default_end_d,
+                        min_value=date(2010, 1, 1),
+                        max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
+                        key="cmc_cal_end_date"
+                    )
+                    end_datetime = pd.to_datetime(end_date_selected) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+
+            # 2. Pilihan Metode Rentang Data Pelatihan
+            cmc_method_options = [
+                "Pilihan Cepat Rentang Waktu (1m - 30T)",
+                "Gunakan Jumlah Hari / Jam / Menit Terakhir",
+                "Rentang Slider (Tahun, Bulan, Hari, Jam, Menit)",
+                "Pilih Tanggal dengan Kalender"
+            ]
             selected_cmc_method = st.radio(
                 "Pilihan Metode Memilih Data Pelatihan (CoinMarketCap):",
-                options=[
-                    "Gunakan Jumlah Hari Terakhir",
-                    "Gunakan Jumlah Jam / Menit Terakhir",
-                    "Rentang Tahun / Bulan / Hari"
-                ],
+                options=cmc_method_options,
                 index=0
             )
 
-            if selected_cmc_method == "Gunakan Jumlah Hari Terakhir":
-                max_avail_days = max(1, (full_data.index[-1] - full_data.index[0]).days) if not full_data.empty else 30
-                default_days = min(30, max_avail_days)
-                input_days = st.number_input("📅 Jumlah Hari Terakhir untuk Pelatihan:", min_value=1, max_value=365*30, value=default_days, step=1)
-                total_duration = timedelta(days=input_days)
-                duration_str = f"{input_days} Hari"
-                days = input_days
+            if selected_cmc_method == "Pilihan Cepat Rentang Waktu (1m - 30T)":
+                cmc_preset_keys = list(PRESET_DURATIONS.keys())
+                
+                # Baris Tombol Cepat
+                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
+                r_btn1 = st.columns(6)
+                r_btn2 = st.columns(6)
+                r_btn3 = st.columns(6)
+                for idx_k, k_lbl in enumerate(cmc_preset_keys[:6]):
+                    with r_btn1[idx_k]:
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                            st.session_state.cmc_preset_selected = k_lbl
+                for idx_k, k_lbl in enumerate(cmc_preset_keys[6:12]):
+                    with r_btn2[idx_k]:
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                            st.session_state.cmc_preset_selected = k_lbl
+                for idx_k, k_lbl in enumerate(cmc_preset_keys[12:]):
+                    with r_btn3[idx_k]:
+                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", use_container_width=True):
+                            st.session_state.cmc_preset_selected = k_lbl
 
-            elif selected_cmc_method == "Gunakan Jumlah Jam / Menit Terakhir":
-                c_jm1, c_jm2 = st.columns(2)
-                with c_jm1:
-                    input_hours = st.number_input("⏰ Jam Terakhir:", min_value=0, max_value=24*365, value=24, step=1)
-                with c_jm2:
-                    input_mins = st.number_input("⏱️ Menit Tambahan:", min_value=0, max_value=59, value=0, step=1)
-                total_duration = timedelta(hours=input_hours, minutes=input_mins)
-                if total_duration.total_seconds() < 1800:
-                    total_duration = timedelta(minutes=30)
-                duration_str = f"{input_hours} Jam {input_mins} Menit"
+                # Radiobox Pilihan Cepat
+                current_preset_idx = cmc_preset_keys.index(st.session_state.cmc_preset_selected) if st.session_state.cmc_preset_selected in cmc_preset_keys else len(cmc_preset_keys)-1
+                selected_preset = st.radio(
+                    "Radiobox Pilihan Rentang Waktu (CoinMarketCap):",
+                    options=cmc_preset_keys,
+                    index=current_preset_idx,
+                    horizontal=True,
+                    key="radio_cmc_presets"
+                )
+                if selected_preset != st.session_state.cmc_preset_selected:
+                    st.session_state.cmc_preset_selected = selected_preset
+
+                total_duration = PRESET_DURATIONS[st.session_state.cmc_preset_selected]
+                duration_str = f"Preset {st.session_state.cmc_preset_selected}"
                 days = max(1, total_duration.days)
 
-            else: # "Rentang Tahun / Bulan / Hari"
-                c_yr1, c_yr2, c_yr3 = st.columns(3)
-                with c_yr1:
-                    input_yr = st.number_input("📅 Tahun:", min_value=0, max_value=30, value=1, step=1)
-                with c_yr2:
-                    input_mo = st.number_input("📅 Bulan:", min_value=0, max_value=11, value=0, step=1)
-                with c_yr3:
-                    input_dy = st.number_input("📅 Hari:", min_value=0, max_value=30, value=0, step=1)
-                total_days = (input_yr * 365) + (input_mo * 30) + input_dy
-                if total_days <= 0:
-                    total_days = 30
-                total_duration = timedelta(days=total_days)
-                duration_str = f"{input_yr} Tahun {input_mo} Bulan {input_dy} Hari"
-                days = total_days
+            elif selected_cmc_method == "Gunakan Jumlah Hari / Jam / Menit Terakhir":
+                st.markdown("Masukkan jumlah hari, jam, atau menit terakhir yang diinginkan (tidak dibatasi):")
+                c_num1, c_num2, c_num3 = st.columns(3)
+                with c_num1:
+                    input_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=30, step=1)
+                with c_num2:
+                    input_hours = st.number_input("⏰ Jumlah Jam Terakhir:", min_value=0, value=0, step=1)
+                with c_num3:
+                    input_mins = st.number_input("⏱️ Jumlah Menit Terakhir:", min_value=0, value=0, step=1)
 
+                total_duration = timedelta(days=input_days, hours=input_hours, minutes=input_mins)
+                if total_duration.total_seconds() < 1800:
+                    total_duration = timedelta(minutes=30)
+                duration_str = f"{input_days} Hari {input_hours} Jam {input_mins} Menit"
+                days = max(1, total_duration.days)
+
+            elif selected_cmc_method == "Rentang Slider (Tahun, Bulan, Hari, Jam, Menit)":
+                st.markdown("Pilih rentang waktu pelatihan menggunakan slider:")
+                c_sl1, c_sl2 = st.columns(2)
+                with c_sl1:
+                    years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30)
+                    months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0)
+                    days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0)
+                with c_sl2:
+                    hours_ago = st.slider('⏰ Jam Tambahan (0 - 23):', 0, 23, 0)
+                    mins_ago = st.slider('⏱️ Menit Tambahan (0 - 59):', 0, 59, 0)
+
+                total_days = (years_ago * 365) + (months_ago * 30) + days_ago
+                total_duration = timedelta(days=total_days, hours=hours_ago, minutes=mins_ago)
+                if total_duration.total_seconds() < 1800:
+                    total_duration = timedelta(minutes=30)
+                duration_str = f"{years_ago} Tahun {months_ago} Bulan {days_ago} Hari {hours_ago} Jam {mins_ago} Menit"
+                days = max(1, total_duration.days)
+
+            else: # "Pilih Tanggal dengan Kalender"
+                default_start = (end_datetime - timedelta(days=365*30)).date()
+                c_cal1, c_cal2 = st.columns(2)
+                with c_cal1:
+                    cal_start = st.date_input(
+                        "Tanggal Mulai Pelatihan:",
+                        value=default_start,
+                        min_value=date(2010, 1, 1),
+                        max_value=end_datetime.date(),
+                        key="cmc_custom_start_cal"
+                    )
+                with c_cal2:
+                    cal_end = st.date_input(
+                        "Tanggal Selesai Pelatihan:",
+                        value=end_datetime.date(),
+                        min_value=cal_start,
+                        max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
+                        key="cmc_custom_end_cal"
+                    )
+                start_datetime = pd.to_datetime(cal_start)
+                end_datetime = pd.to_datetime(cal_end) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+                total_duration = end_datetime - start_datetime
+                duration_str = f"Kalender ({cal_start} s/d {cal_end})"
+                days = max(1, total_duration.days)
+
+            # Ekstrak data berdasarkan start_datetime / total_duration dan end_datetime
             if not full_data.empty:
-                last_ts = full_data.index[-1]
-                start_ts = last_ts - total_duration
-                data = full_data[full_data.index >= start_ts].copy()
+                sub_full = full_data[full_data.index <= end_datetime].copy()
+                if sub_full.empty:
+                    sub_full = full_data.copy()
+                start_ts = end_datetime - total_duration
+                data = sub_full[sub_full.index >= start_ts].copy()
                 if len(data) < 30:
-                    data = full_data.tail(min(len(full_data), 120)).copy()
+                    data = sub_full.tail(min(len(sub_full), 120)).copy()
             else:
                 data = full_data.copy()
 
-        else:
-            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True)
-            if use_today_end:
-                end_date_obj = date.today()
-            else:
-                end_date_obj = st.date_input(
-                    "Tanggal Selesai Pelatihan",
-                    value=date.today(),
-                    min_value=date(2000, 1, 1),
-                    max_value=date.today()
-                )
+        else: # yFinance
+            if 'yf_end_offset_btn' not in st.session_state:
+                st.session_state.yf_end_offset_btn = None
+            if 'yf_preset_selected' not in st.session_state:
+                st.session_state.yf_preset_selected = "30 T"
 
-            method_options = ["Rentang Tahun / Bulan / Hari", "Gunakan Jumlah Hari Terakhir", "Pilih Tanggal dengan Kalender"]
+            # 1. Pilihan Tanggal Selesai (Hari ini / Uncheck Kalender & Tombol)
+            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_yf")
+            latest_avail_dt = pd.to_datetime(full_data.index[-1]).date() if not full_data.empty else date.today()
+
+            if use_today_end:
+                end_date_obj = latest_avail_dt
+                st.session_state.yf_end_offset_btn = None
+            else:
+                st.markdown("**Pilih Tanggal Selesai Pelatihan:**")
+                st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir:</b></small>", unsafe_allow_html=True)
+                
+                yf_end_offsets = [
+                    ("1 D", timedelta(days=1)),
+                    ("1 W", timedelta(days=7)),
+                    ("1 M", timedelta(days=30)),
+                    ("90 D", timedelta(days=90)),
+                    ("YTD", timedelta(days=365))
+                ]
+                btn_yf_cols = st.columns(5)
+                for b_i, (t_lbl, t_delta) in enumerate(yf_end_offsets):
+                    with btn_yf_cols[b_i]:
+                        if st.button(t_lbl, key=f"btn_end_yf_{t_lbl}", use_container_width=True):
+                            st.session_state.yf_end_offset_btn = t_lbl
+
+                selected_yf_offset = st.session_state.yf_end_offset_btn
+                if selected_yf_offset:
+                    offset_dict = dict(yf_end_offsets)
+                    delta_val = offset_dict.get(selected_yf_offset, timedelta(0))
+                    end_date_obj = latest_avail_dt - delta_val
+                    st.info(f"📍 Tanggal Selesai Terpilih via Tombol: **{selected_yf_offset} yang lalu** (`{end_date_obj}`).")
+                else:
+                    end_date_obj = st.date_input(
+                        "📅 Tanggal Selesai Pelatihan (Kalender):",
+                        value=latest_avail_dt,
+                        min_value=date(1990, 1, 1),
+                        max_value=latest_avail_dt,
+                        key="yf_cal_end_date"
+                    )
+
+            # 2. Pilihan Metode Rentang Data Pelatihan yFinance
+            method_options = [
+                "Pilihan Cepat Rentang Waktu (1D - 30T)",
+                "Gunakan Jumlah Hari Terakhir",
+                "Rentang Slider (Tahun, Bulan, Hari)",
+                "Pilih Tanggal dengan Kalender"
+            ]
             selected_method = st.radio(
                 "Pilihan Metode Memilih Data Pelatihan:",
                 options=method_options,
                 index=0
             )
 
-            if selected_method == "Rentang Tahun / Bulan / Hari":
+            yf_preset_keys = ["1 D", "1 W", "1 M", "90 D", "YTD", "2 T", "3 T", "4 T", "5 T", "10 T", "30 T"]
+
+            if selected_method == "Pilihan Cepat Rentang Waktu (1D - 30T)":
+                st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
+                r_btn_yf1 = st.columns(6)
+                r_btn_yf2 = st.columns(5)
+                for idx_k, k_lbl in enumerate(yf_preset_keys[:6]):
+                    with r_btn_yf1[idx_k]:
+                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", use_container_width=True):
+                            st.session_state.yf_preset_selected = k_lbl
+                for idx_k, k_lbl in enumerate(yf_preset_keys[6:]):
+                    with r_btn_yf2[idx_k]:
+                        if st.button(k_lbl, key=f"btn_p_yf_{k_lbl}", use_container_width=True):
+                            st.session_state.yf_preset_selected = k_lbl
+
+                current_yf_idx = yf_preset_keys.index(st.session_state.yf_preset_selected) if st.session_state.yf_preset_selected in yf_preset_keys else len(yf_preset_keys)-1
+                selected_yf_preset = st.radio(
+                    "Radiobox Pilihan Rentang Waktu (yFinance):",
+                    options=yf_preset_keys,
+                    index=current_yf_idx,
+                    horizontal=True,
+                    key="radio_yf_presets"
+                )
+                if selected_yf_preset != st.session_state.yf_preset_selected:
+                    st.session_state.yf_preset_selected = selected_yf_preset
+
+                total_duration = PRESET_DURATIONS[st.session_state.yf_preset_selected]
+                days = max(120, total_duration.days)
+                start_date_obj = end_date_obj - timedelta(days=days)
+
+            elif selected_method == "Gunakan Jumlah Hari Terakhir":
+                st.markdown("Masukkan jumlah hari pelatihan yang diinginkan (tidak dibatasi):")
+                days = st.number_input("📅 Jumlah Hari Terakhir untuk Pelatihan:", min_value=120, value=365*30, step=1)
+                start_date_obj = end_date_obj - timedelta(days=days)
+
+            elif selected_method == "Rentang Slider (Tahun, Bulan, Hari)":
+                st.markdown("Pilih rentang waktu pelatihan menggunakan slider:")
                 c_yf1, c_yf2, c_yf3 = st.columns(3)
                 with c_yf1:
-                    years_ago = st.number_input('📅 Tahun yang lalu:', min_value=0, max_value=30, value=30, step=1)
+                    years_ago = st.slider('📅 Tahun yang lalu (0 - 30):', 0, 30, 30)
                 with c_yf2:
-                    months_ago = st.number_input('📅 Bulan tambahan:', min_value=0, max_value=11, value=0, step=1)
+                    months_ago = st.slider('📅 Bulan tambahan (0 - 11):', 0, 11, 0)
                 with c_yf3:
-                    days_ago = st.number_input('📅 Hari tambahan:', min_value=0, max_value=30, value=0, step=1)
+                    days_ago = st.slider('📅 Hari tambahan (0 - 30):', 0, 30, 0)
                 
                 days = (years_ago * 365) + (months_ago * 30) + days_ago
                 if days < 120:
                     days = 120
                 start_date_obj = end_date_obj - timedelta(days=days)
 
-            elif selected_method == "Gunakan Jumlah Hari Terakhir":
-                default_val = 365 * 30
-                days = st.number_input("Jumlah hari untuk pelatihan", min_value=120, max_value=365*30, value=default_val, step=1)
-                start_date_obj = end_date_obj - timedelta(days=days)
-
             else: # "Pilih Tanggal dengan Kalender"
-                default_start = end_date_obj - timedelta(days=365*30) # 30 tahun yang lalu
-                
+                default_start = end_date_obj - timedelta(days=365*30)
                 start_date_selected = st.date_input(
-                    "Tanggal Mulai Pelatihan",
+                    "Tanggal Mulai Pelatihan:",
                     value=default_start,
                     min_value=date(1990, 1, 1),
-                    max_value=end_date_obj
+                    max_value=end_date_obj,
+                    key="yf_cal_start_date"
                 )
-                
                 start_date_obj = start_date_selected
                 days = (end_date_obj - start_date_obj).days
                 if days < 120:
