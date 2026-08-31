@@ -1488,31 +1488,18 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
         hovertext=hover_candle
     ), row=1, col=1)
     
-    # 2. Garis Mean / Average per Candle (Oranye)
+    # 2. Garis Mean / Average per Candle (Cyan / Biru Muda)
     fig.add_trace(go.Scatter(
         x=dates,
         y=mean_arr,
         mode='lines',
         name='Harga Rata-rata (Mean Candle)',
-        line=dict(color='#FF9800', width=1.6, dash='dot'),
+        line=dict(color='#00B0FF', width=1.5, dash='dot'),
         hoverinfo='text',
         hovertext=[f"<b>Waktu:</b> {format_timestamp_for_plot(d)}<br><b>Rata-rata (Mean):</b> {smart_format(m, prefix=curr_prefix)}" for d, m in zip(dates, mean_arr)]
     ), row=1, col=1)
     
-    # 3. Garis Horizontal Grand Mean
-    fig.add_hline(
-        y=grand_mean,
-        line_dash="dash",
-        line_color="#FFA000",
-        line_width=1.3,
-        annotation_text=f"Grand Mean: {smart_format(grand_mean, prefix=curr_prefix)}",
-        annotation_position="top right",
-        annotation_font_size=10,
-        annotation_font_color="#FFA000",
-        row=1, col=1
-    )
-    
-    # 4. Marker High and Low
+    # 3. Marker High and Low Harga Candlestick
     max_idx = int(np.argmax(high_arr)) if len(high_arr) > 0 else -1
     min_idx = int(np.argmin(low_arr)) if len(low_arr) > 0 else -1
     if max_idx >= 0 and min_idx >= 0 and max_idx != min_idx:
