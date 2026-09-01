@@ -217,8 +217,8 @@ def get_time_change_pct(df, delta):
         total_span_sec = (last_dt - first_dt).total_seconds()
         req_sec = delta.total_seconds()
         
-        # Jika durasi data yang tersedia tidak mencapai 70% dari target lookback, jangan tampilkan data (null)
-        if total_span_sec < (req_sec * 0.7):
+        # Jika total rentang data pelatihan tidak mencukupi (misal data 1 jam tapi minta 1D), tampilkan null (-)
+        if req_sec > 60 and total_span_sec < (req_sec * 0.7):
             return None
             
         target_dt = last_dt - delta
@@ -226,6 +226,8 @@ def get_time_change_pct(df, delta):
         sub = df[dates <= target_dt]
         if not sub.empty:
             past_val = safe_float(sub['Close'].iloc[-1])
+        elif len(df) >= 2:
+            past_val = safe_float(df['Close'].iloc[0])
         else:
             return None
             
@@ -245,8 +247,8 @@ def get_time_period_slice(df, delta):
         total_span_sec = (last_dt - first_dt).total_seconds()
         req_sec = delta.total_seconds()
         
-        # Jika durasi data yang tersedia tidak mencapai 70% dari target lookback, jangan tampilkan grafik mini
-        if total_span_sec < (req_sec * 0.7):
+        # Jika total rentang data pelatihan tidak mencukupi, jangan tampilkan grafik mini
+        if req_sec > 60 and total_span_sec < (req_sec * 0.7):
             return pd.DataFrame()
             
         target_dt = last_dt - delta
@@ -254,6 +256,8 @@ def get_time_period_slice(df, delta):
         sub = df[dates >= target_dt].copy()
         if len(sub) >= 2:
             return sub
+        elif len(df) >= 2:
+            return df.tail(2).copy()
         return pd.DataFrame()
     except Exception:
         return pd.DataFrame()
@@ -453,11 +457,16 @@ def get_change_pct(df, days_lookback):
     if df is None or len(df) < 2:
         return None
     try:
+        if days_lookback == 1:
+            c_now = safe_float(df['Close'].iloc[-1])
+            c_prev = safe_float(df['Close'].iloc[-2])
+            return ((c_now - c_prev) / c_prev) * 100.0 if c_prev > 0 else 0.0
+
         last_dt = pd.to_datetime(df['Date'].iloc[-1] if 'Date' in df.columns else df.index[-1])
         first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
         total_span_days = (last_dt - first_dt).total_seconds() / 86400.0
         
-        # Jika durasi data yang tersedia tidak mencapai 70% dari lookback hari, jangan tampilkan (null)
+        # Jika total rentang data pelatihan tidak mencukupi, tampilkan null (-)
         if days_lookback > 1 and total_span_days < (days_lookback * 0.7):
             return None
             
@@ -466,6 +475,8 @@ def get_change_pct(df, days_lookback):
         sub_df = df[dates <= target_dt]
         if not sub_df.empty:
             past_price = safe_float(sub_df['Close'].iloc[-1])
+        elif len(df) >= 2:
+            past_price = safe_float(df['Close'].iloc[0])
         else:
             return None
         
@@ -484,15 +495,20 @@ def get_period_slice(df, days):
         first_dt = pd.to_datetime(df['Date'].iloc[0] if 'Date' in df.columns else df.index[0])
         total_span_days = (last_dt - first_dt).total_seconds() / 86400.0
         
-        # Jika durasi data tidak mencukupi, jangan tampilkan grafik
+        # Jika total rentang data pelatihan tidak mencukupi, jangan tampilkan grafik
         if days > 1 and total_span_days < (days * 0.7):
             return pd.DataFrame()
             
+        if days == 1:
+            return df.tail(2).copy()
+
         start_dt = last_dt - pd.Timedelta(days=days)
         dates = pd.to_datetime(df['Date'] if 'Date' in df.columns else df.index)
         sub = df[dates >= start_dt].copy()
         if len(sub) >= 2:
             return sub
+        elif len(df) >= 2:
+            return df.tail(2).copy()
         return pd.DataFrame()
     except Exception:
         return pd.DataFrame()
@@ -1583,14 +1599,14 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             [{"secondary_y": False}]
         ],
         subplot_titles=[
-            f"1. Candlestick {asset_type}, Rata-rata (Mean) & VPVR (Volume Profile: POC, VAH, VAL)",
+            f"1. Candlestick {asset_type} & Profil Volume VPVR (POC, VAH, VAL)",
             "2. Volume Transaksi (Bar) & ATR Volatilitas (Garis Kuning)",
             "3. Delta Volume Harian (Net Buy vs Net Sell)"
         ]
     )
     
     # ----------------------------------------------------
-    # Row 1: Candlestick, Mean / Average, and VPVR Profile
+    # Row 1: Candlestick and VPVR Profile
     # ----------------------------------------------------
     hover_candle = []
     for i in range(n):
@@ -1628,18 +1644,7 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
         hovertext=hover_candle
     ), row=1, col=1)
     
-    # 2. Garis Mean / Average per Candle (Cyan / Biru Muda)
-    fig.add_trace(go.Scatter(
-        x=dates,
-        y=mean_arr,
-        mode='lines',
-        name='Harga Rata-rata (Mean Candle)',
-        line=dict(color='#00B0FF', width=1.5, dash='dot'),
-        hoverinfo='text',
-        hovertext=[f"<b>Waktu:</b> {format_timestamp_for_plot(d)}<br><b>Rata-rata (Mean):</b> {smart_format(m, prefix=curr_prefix)}" for d, m in zip(dates, mean_arr)]
-    ), row=1, col=1)
-    
-    # 3. Marker High and Low Harga Candlestick
+    # 2. Marker High and Low Harga Candlestick
     max_idx = int(np.argmax(high_arr)) if len(high_arr) > 0 else -1
     min_idx = int(np.argmin(low_arr)) if len(low_arr) > 0 else -1
     if max_idx >= 0 and min_idx >= 0 and max_idx != min_idx:
@@ -1929,42 +1934,39 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
             ), row=3, col=1)
         
     # ----------------------------------------------------
-    # Layout & Y-Axes Padding Settings (Fixes all text & title collision)
+    # Layout & Y-Axes Padding Settings (Legend placed beneath Row 3)
     # ----------------------------------------------------
     fig.update_layout(
         title=dict(
             text=f"<b>{title}</b>",
             font=dict(size=16, color='#1A1A1A'),
-            y=0.99,
+            y=0.98,
             x=0.5,
             xanchor='center',
             yanchor='top'
         ),
         hovermode='x unified',
-        margin=dict(l=60, r=60, t=140, b=55),
+        margin=dict(l=60, r=60, t=75, b=95),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.025,
+            yanchor="top",
+            y=-0.16,
             xanchor="center",
             x=0.5,
             font=dict(size=10.5),
-            bgcolor='rgba(255, 255, 255, 0.9)',
-            bordercolor='rgba(0, 0, 0, 0.12)',
+            bgcolor='rgba(255, 255, 255, 0.95)',
+            bordercolor='rgba(0, 0, 0, 0.15)',
             borderwidth=1
         ),
         template='plotly_white',
-        height=1020,
+        height=1000,
         showlegend=True,
         xaxis_rangeslider_visible=False
     )
     
-    # Adjust subplot titles annotations to prevent overlapping with legend and plot data
-    for idx_a, annot in enumerate(fig.layout.annotations):
-        if idx_a == 0:
-            annot.update(font=dict(size=12, color='#222'), yshift=14)
-        elif idx_a in [1, 2]:
-            annot.update(font=dict(size=12, color='#222'), yshift=8)
+    # Adjust subplot titles annotations to prevent overlapping
+    for annot in fig.layout.annotations:
+        annot.update(font=dict(size=12, color='#222'), yshift=8)
     
     # 1. Padding Row 1 (Candlestick & VPVR - Tanpa ATR)
     p_min = float(np.min(low_arr))
