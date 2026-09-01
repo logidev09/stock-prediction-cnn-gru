@@ -599,6 +599,38 @@ def get_bar_colors_for_volume(df_slice):
     except Exception:
         return None
 
+def get_data_freshness_badge(last_timestamp):
+    """
+    Menghasilkan badge HTML status kesegaran data:
+    - Hijau: Data hari ini (Fresh / Real-Time).
+    - Kuning: 1-2 hari yang lalu (Tertunda / Akhir Pekan / Bursa Tutup).
+    - Merah: > 2 hari yang lalu / bertahun-tahun (Data Historis Lama / Tidak Update).
+    """
+    if last_timestamp is None:
+        return ""
+    try:
+        last_dt = pd.to_datetime(last_timestamp)
+        now_dt = pd.Timestamp.now()
+        
+        diff_days = (now_dt.date() - last_dt.date()).days
+        
+        is_intraday = (last_dt.hour != 0 or last_dt.minute != 0)
+        last_str = last_dt.strftime('%Y-%m-%d %H:%M') if is_intraday else last_dt.strftime('%Y-%m-%d')
+        
+        if diff_days <= 0:
+            return f"<span style='display:inline-flex; align-items:center; background:rgba(0, 200, 83, 0.12); color:#00C853; border:1px solid rgba(0, 200, 83, 0.35); padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600;'>🟢 Data Terkini: Hari Ini ({last_str})</span>"
+        elif diff_days in [1, 2]:
+            return f"<span style='display:inline-flex; align-items:center; background:rgba(255, 179, 0, 0.12); color:#E65100; border:1px solid rgba(255, 179, 0, 0.4); padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600;'>🟡 Data Terakhir: {diff_days} Hari Lalu ({last_str}) (Tertunda/Libur)</span>"
+        elif diff_days < 365:
+            return f"<span style='display:inline-flex; align-items:center; background:rgba(213, 0, 0, 0.10); color:#D50000; border:1px solid rgba(213, 0, 0, 0.35); padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600;'>🔴 Peringatan: Data Terakhir {diff_days} Hari Lalu ({last_str})</span>"
+        else:
+            diff_years = diff_days // 365
+            diff_rem_m = (diff_days % 365) // 30
+            y_str = f"{diff_years} Tahun" if diff_rem_m == 0 else f"{diff_years} Thn {diff_rem_m} Bln"
+            return f"<span style='display:inline-flex; align-items:center; background:rgba(213, 0, 0, 0.10); color:#D50000; border:1px solid rgba(213, 0, 0, 0.35); padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600;'>🔴 Peringatan: Data Terakhir {y_str} Lalu ({last_str})</span>"
+    except Exception:
+        return ""
+
 def render_combined_volume_atr_sparkline(vol_series, atr_series, bar_colors=None, height=1.3):
     fig, ax1 = plt.subplots(figsize=(2.5, height), dpi=100)
     fig.patch.set_facecolor('none')
@@ -2336,8 +2368,13 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.cmc_preset_selected = "30 T"
 
             # 1. Pilihan Tanggal / Waktu Selesai (Hari ini / Uncheck Kalender & Tombol)
-            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_cmc")
             latest_avail_dt = full_data.index[-1] if not full_data.empty else pd.Timestamp.now()
+
+            col_chk, col_fresh = st.columns([1.1, 1.4])
+            with col_chk:
+                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_cmc")
+            with col_fresh:
+                st.markdown(f"<div style='padding-top:4px;'>{get_data_freshness_badge(latest_avail_dt)}</div>", unsafe_allow_html=True)
 
             if use_today_end:
                 end_datetime = latest_avail_dt
@@ -2384,8 +2421,8 @@ def main(stock, data_source="yfinance", api_key=""):
             # 2. Pilihan Metode Rentang Data Pelatihan
             cmc_method_options = [
                 "Pilihan Cepat Rentang Waktu (1m - 30T)",
-                "Gunakan Jumlah Hari / Jam / Menit Terakhir",
-                "Rentang Slider (Tahun, Bulan, Hari, Jam, Menit)",
+                "Gunakan Jumlah Tahun / Bulan / Minggu / Hari / Jam / Menit Terakhir",
+                "Rentang Slider (Tahun, Bulan, Minggu, Hari, Jam, Menit)",
                 "Pilih Tanggal dengan Kalender"
             ]
             selected_cmc_method = st.radio(
@@ -2427,38 +2464,56 @@ def main(stock, data_source="yfinance", api_key=""):
                 duration_str = f"Preset {active_cmc_preset}"
                 days = max(1, total_duration.days)
 
-            elif selected_cmc_method == "Gunakan Jumlah Hari / Jam / Menit Terakhir":
-                st.markdown("Masukkan jumlah hari, jam, atau menit terakhir yang diinginkan (tidak dibatasi):")
-                c_num1, c_num2, c_num3 = st.columns(3)
-                with c_num1:
-                    input_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=30, step=1)
-                with c_num2:
-                    input_hours = st.number_input("⏰ Jumlah Jam Terakhir:", min_value=0, value=0, step=1)
-                with c_num3:
-                    input_mins = st.number_input("⏱️ Jumlah Menit Terakhir:", min_value=0, value=0, step=1)
+            elif selected_cmc_method == "Gunakan Jumlah Tahun / Bulan / Minggu / Hari / Jam / Menit Terakhir":
+                st.markdown("Masukkan jumlah tahun, bulan, minggu, hari, jam, atau menit terakhir yang diinginkan (tidak dibatasi):")
+                c_cmc_n1, c_cmc_n2, c_cmc_n3 = st.columns(3)
+                with c_cmc_n1:
+                    input_cmc_years = st.number_input("📅 Jumlah Tahun Terakhir:", min_value=0, value=0, step=1, key="cmc_num_years")
+                with c_cmc_n2:
+                    input_cmc_months = st.number_input("📅 Jumlah Bulan Terakhir:", min_value=0, value=0, step=1, key="cmc_num_months")
+                with c_cmc_n3:
+                    input_cmc_weeks = st.number_input("📅 Jumlah Minggu Terakhir:", min_value=0, value=0, step=1, key="cmc_num_weeks")
+                c_cmc_n4, c_cmc_n5, c_cmc_n6 = st.columns(3)
+                with c_cmc_n4:
+                    input_cmc_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=30, step=1, key="cmc_num_days")
+                with c_cmc_n5:
+                    input_cmc_hours = st.number_input("⏰ Jumlah Jam Terakhir:", min_value=0, value=0, step=1, key="cmc_num_hours")
+                with c_cmc_n6:
+                    input_cmc_mins = st.number_input("⏱️ Jumlah Menit Terakhir:", min_value=0, value=0, step=1, key="cmc_num_mins")
 
-                total_duration = timedelta(days=input_days, hours=input_hours, minutes=input_mins)
+                total_cmc_days = (input_cmc_years * 365) + (input_cmc_months * 30) + (input_cmc_weeks * 7) + input_cmc_days
+                total_duration = timedelta(days=total_cmc_days, hours=input_cmc_hours, minutes=input_cmc_mins)
                 if total_duration.total_seconds() < 1800:
                     total_duration = timedelta(minutes=30)
-                duration_str = f"{input_days} Hari {input_hours} Jam {input_mins} Menit"
+                
+                p_strs = []
+                if input_cmc_years > 0: p_strs.append(f"{input_cmc_years} Tahun")
+                if input_cmc_months > 0: p_strs.append(f"{input_cmc_months} Bulan")
+                if input_cmc_weeks > 0: p_strs.append(f"{input_cmc_weeks} Minggu")
+                if input_cmc_days > 0: p_strs.append(f"{input_cmc_days} Hari")
+                if input_cmc_hours > 0: p_strs.append(f"{input_cmc_hours} Jam")
+                if input_cmc_mins > 0: p_strs.append(f"{input_cmc_mins} Menit")
+                duration_str = " ".join(p_strs) if p_strs else "30 Menit"
                 days = max(1, total_duration.days)
 
-            elif selected_cmc_method == "Rentang Slider (Tahun, Bulan, Hari, Jam, Menit)":
+            elif selected_cmc_method == "Rentang Slider (Tahun, Bulan, Minggu, Hari, Jam, Menit)":
                 st.markdown("Pilih rentang waktu pelatihan menggunakan slider:")
-                c_sl1, c_sl2 = st.columns(2)
+                c_sl1, c_sl2, c_sl3 = st.columns(3)
                 with c_sl1:
-                    years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30)
-                    months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0)
-                    days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0)
+                    years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30, key="cmc_sl_yr")
+                    months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0, key="cmc_sl_mo")
                 with c_sl2:
-                    hours_ago = st.slider('⏰ Jam Tambahan (0 - 23):', 0, 23, 0)
-                    mins_ago = st.slider('⏱️ Menit Tambahan (0 - 59):', 0, 59, 0)
+                    weeks_ago = st.slider('📅 Minggu Tambahan (0 - 4):', 0, 4, 0, key="cmc_sl_wk")
+                    days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0, key="cmc_sl_dy")
+                with c_sl3:
+                    hours_ago = st.slider('⏰ Jam Tambahan (0 - 23):', 0, 23, 0, key="cmc_sl_hr")
+                    mins_ago = st.slider('⏱️ Menit Tambahan (0 - 59):', 0, 59, 0, key="cmc_sl_mn")
 
-                total_days = (years_ago * 365) + (months_ago * 30) + days_ago
+                total_days = (years_ago * 365) + (months_ago * 30) + (weeks_ago * 7) + days_ago
                 total_duration = timedelta(days=total_days, hours=hours_ago, minutes=mins_ago)
                 if total_duration.total_seconds() < 1800:
                     total_duration = timedelta(minutes=30)
-                duration_str = f"{years_ago} Tahun {months_ago} Bulan {days_ago} Hari {hours_ago} Jam {mins_ago} Menit"
+                duration_str = f"{years_ago} Tahun {months_ago} Bulan {weeks_ago} Minggu {days_ago} Hari {hours_ago} Jam {mins_ago} Menit"
                 days = max(1, total_duration.days)
 
             else: # "Pilih Tanggal dengan Kalender"
@@ -2505,8 +2560,13 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.session_state.yf_preset_selected = "30 T"
 
             # 1. Pilihan Tanggal Selesai (Hari ini / Uncheck Kalender & Tombol)
-            use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_yf")
             latest_avail_dt = pd.to_datetime(full_data.index[-1]).date() if not full_data.empty else date.today()
+
+            col_chk_yf, col_fresh_yf = st.columns([1.1, 1.4])
+            with col_chk_yf:
+                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_yf")
+            with col_fresh_yf:
+                st.markdown(f"<div style='padding-top:4px;'>{get_data_freshness_badge(latest_avail_dt)}</div>", unsafe_allow_html=True)
 
             if use_today_end:
                 end_date_obj = latest_avail_dt
@@ -2549,8 +2609,8 @@ def main(stock, data_source="yfinance", api_key=""):
             # 2. Pilihan Metode Rentang Data Pelatihan yFinance
             method_options = [
                 "Pilihan Cepat Rentang Waktu (1D - 30T)",
-                "Gunakan Jumlah Hari Terakhir",
-                "Rentang Slider (Tahun, Bulan, Hari)",
+                "Gunakan Jumlah Tahun / Bulan / Minggu / Hari Terakhir",
+                "Rentang Slider (Tahun, Bulan, Minggu, Hari)",
                 "Pilih Tanggal dengan Kalender"
             ]
             selected_method = st.radio(
@@ -2584,22 +2644,35 @@ def main(stock, data_source="yfinance", api_key=""):
                 days = max(120, total_duration.days)
                 start_date_obj = end_date_obj - timedelta(days=days)
 
-            elif selected_method == "Gunakan Jumlah Hari Terakhir":
-                st.markdown("Masukkan jumlah hari pelatihan yang diinginkan (tidak dibatasi):")
-                days = st.number_input("📅 Jumlah Hari Terakhir untuk Pelatihan:", min_value=120, value=365*30, step=1)
+            elif selected_method == "Gunakan Jumlah Tahun / Bulan / Minggu / Hari Terakhir":
+                st.markdown("Masukkan jumlah tahun, bulan, minggu, atau hari pelatihan yang diinginkan (tidak dibatasi):")
+                c_yf_n1, c_yf_n2, c_yf_n3, c_yf_n4 = st.columns(4)
+                with c_yf_n1:
+                    input_yf_years = st.number_input("📅 Jumlah Tahun Terakhir:", min_value=0, value=30, step=1, key="yf_num_years")
+                with c_yf_n2:
+                    input_yf_months = st.number_input("📅 Jumlah Bulan Terakhir:", min_value=0, value=0, step=1, key="yf_num_months")
+                with c_yf_n3:
+                    input_yf_weeks = st.number_input("📅 Jumlah Minggu Terakhir:", min_value=0, value=0, step=1, key="yf_num_weeks")
+                with c_yf_n4:
+                    input_yf_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=0, step=1, key="yf_num_days")
+
+                total_yf_days = (input_yf_years * 365) + (input_yf_months * 30) + (input_yf_weeks * 7) + input_yf_days
+                days = max(120, total_yf_days)
                 start_date_obj = end_date_obj - timedelta(days=days)
 
-            elif selected_method == "Rentang Slider (Tahun, Bulan, Hari)":
+            elif selected_method == "Rentang Slider (Tahun, Bulan, Minggu, Hari)":
                 st.markdown("Pilih rentang waktu pelatihan menggunakan slider:")
-                c_yf1, c_yf2, c_yf3 = st.columns(3)
+                c_yf1, c_yf2, c_yf3, c_yf4 = st.columns(4)
                 with c_yf1:
-                    years_ago = st.slider('📅 Tahun yang lalu (0 - 30):', 0, 30, 30)
+                    years_ago = st.slider('📅 Tahun yang lalu (0 - 30):', 0, 30, 30, key="yf_sl_yr")
                 with c_yf2:
-                    months_ago = st.slider('📅 Bulan tambahan (0 - 11):', 0, 11, 0)
+                    months_ago = st.slider('📅 Bulan tambahan (0 - 11):', 0, 11, 0, key="yf_sl_mo")
                 with c_yf3:
-                    days_ago = st.slider('📅 Hari tambahan (0 - 30):', 0, 30, 0)
+                    weeks_ago = st.slider('📅 Minggu tambahan (0 - 4):', 0, 4, 0, key="yf_sl_wk")
+                with c_yf4:
+                    days_ago = st.slider('📅 Hari tambahan (0 - 30):', 0, 30, 0, key="yf_sl_dy")
                 
-                days = (years_ago * 365) + (months_ago * 30) + days_ago
+                days = (years_ago * 365) + (months_ago * 30) + (weeks_ago * 7) + days_ago
                 if days < 120:
                     days = 120
                 start_date_obj = end_date_obj - timedelta(days=days)
@@ -2642,8 +2715,16 @@ def main(stock, data_source="yfinance", api_key=""):
                 y_cnt = actual_days // 365
                 rem_days = actual_days % 365
                 m_cnt = rem_days // 30
-                d_cnt = rem_days % 30
-                duration_str = f"{y_cnt} Tahun {m_cnt} Bulan {d_cnt} Hari"
+                rem_days2 = rem_days % 30
+                w_cnt = rem_days2 // 7
+                d_cnt = rem_days2 % 7
+                
+                parts = []
+                if y_cnt > 0: parts.append(f"{y_cnt} Tahun")
+                if m_cnt > 0: parts.append(f"{m_cnt} Bulan")
+                if w_cnt > 0: parts.append(f"{w_cnt} Minggu")
+                if d_cnt > 0 or not parts: parts.append(f"{d_cnt} Hari")
+                duration_str = " ".join(parts)
             else:
                 actual_days = 0
                 duration_str = "0 Tahun 0 Bulan 0 Hari"
