@@ -145,37 +145,59 @@ def is_crypto_ticker(ticker):
     )
 
 def get_cmc_api_key_from_env_or_secrets():
+    # 1. Google Colab Secrets
+    try:
+        from google.colab import userdata
+        sec = userdata.get("CMC_API_KEY")
+        if sec:
+            return str(sec).strip()
+    except Exception:
+        pass
+    # 2. Kaggle Secrets
     try:
         from kaggle_secrets import UserSecretsClient
         user_secrets = UserSecretsClient()
         sec = user_secrets.get_secret("CMC_API_KEY")
         if sec:
-            return sec
+            return str(sec).strip()
     except Exception:
         pass
+    # 3. Streamlit Secrets
     try:
         if "CMC_API_KEY" in st.secrets:
-            return st.secrets["CMC_API_KEY"]
+            return str(st.secrets["CMC_API_KEY"]).strip()
     except Exception:
         pass
+    # 4. OS Environment
     import os
-    return os.environ.get("CMC_API_KEY", "")
+    return os.environ.get("CMC_API_KEY", "").strip()
 
 def get_kraken_api_key_from_env_or_secrets():
     for k_name in ["KRAKEN_API_KEY", "KRAKEN_KEY", "kraken_api_key", "kraken_key"]:
+        # 1. Google Colab Secrets
+        try:
+            from google.colab import userdata
+            sec = userdata.get(k_name)
+            if sec:
+                return str(sec).strip()
+        except Exception:
+            pass
+        # 2. Kaggle Secrets
         try:
             from kaggle_secrets import UserSecretsClient
             user_secrets = UserSecretsClient()
             sec = user_secrets.get_secret(k_name)
             if sec:
-                return sec
+                return str(sec).strip()
         except Exception:
             pass
+        # 3. Streamlit Secrets
         try:
             if k_name in st.secrets:
                 return str(st.secrets[k_name]).strip()
         except Exception:
             pass
+        # 4. OS Environment
         import os
         if os.environ.get(k_name):
             return os.environ.get(k_name).strip()
