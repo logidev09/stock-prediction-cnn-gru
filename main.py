@@ -453,6 +453,158 @@ def format_market_cap(cap, curr_prefix=""):
     except Exception:
         return "-"
 
+def format_volume_val(vol, curr_prefix=""):
+    if vol is None or vol == 0 or pd.isna(vol):
+        return "-"
+    try:
+        fvol = float(vol)
+        if fvol >= 1e12:
+            return f"{curr_prefix}{fvol/1e12:,.2f} T"
+        elif fvol >= 1e9:
+            return f"{curr_prefix}{fvol/1e9:,.2f} B"
+        elif fvol >= 1e6:
+            return f"{curr_prefix}{fvol/1e6:,.2f} M"
+        elif fvol >= 1e3:
+            return f"{curr_prefix}{fvol/1e3:,.2f} K"
+        else:
+            return smart_format(fvol, prefix=curr_prefix)
+    except Exception:
+        return "-"
+
+def format_duration_human_readable(start_dt, end_dt):
+    if start_dt is None or end_dt is None:
+        return "-"
+    try:
+        s = pd.to_datetime(start_dt)
+        e = pd.to_datetime(end_dt)
+        if s > e:
+            s, e = e, s
+        total_seconds = max(0.0, (e - s).total_seconds())
+        total_days = total_seconds / 86400.0
+
+        years = int(total_days // 365.25)
+        rem_days_after_y = total_days % 365.25
+        months_in_y = int(rem_days_after_y // 30.4375)
+        hours = int((total_seconds % 86400) // 3600)
+
+        # 1. Jika hingga tahun: Tahun dan Bulan
+        if years >= 1:
+            if months_in_y > 0:
+                return f"{years} Tahun {months_in_y} Bulan"
+            return f"{years} Tahun"
+        # 2. Jika bulan: Bulan dan Minggu
+        elif total_days >= 30:
+            m = int(total_days // 30.4375)
+            w = int((total_days % 30.4375) // 7)
+            if w > 0:
+                return f"{m} Bulan {w} Minggu"
+            return f"{m} Bulan"
+        # 3. Jika minggu: Minggu dan Hari
+        elif total_days >= 7:
+            w = int(total_days // 7)
+            d = int(total_days % 7)
+            if d > 0:
+                return f"{w} Minggu {d} Hari"
+            return f"{w} Minggu"
+        # 4. Jika hari: Hari dan Jam
+        elif total_days >= 1:
+            d = int(total_days)
+            h = int(hours)
+            if h > 0:
+                return f"{d} Hari {h} Jam"
+            return f"{d} Hari"
+        # 5. Jika jam: Jam dan Menit
+        elif total_seconds >= 3600:
+            h = int(total_seconds // 3600)
+            m = int((total_seconds % 3600) // 60)
+            if m > 0:
+                return f"{h} Jam {m} Menit"
+            return f"{h} Jam"
+        # 6. Jika menit: Menit dan Detik
+        else:
+            m = int(total_seconds // 60)
+            sec = int(total_seconds % 60)
+            if sec > 0 and m > 0:
+                return f"{m} Menit {sec} Detik"
+            elif m > 0:
+                return f"{m} Menit"
+            return f"{max(1, int(total_seconds))} Detik"
+    except Exception:
+        return "-"
+
+@st.cache_data(ttl=60)
+def fetch_cmc_latest_quote(symbol, api_key=""):
+    clean_sym = symbol.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    if not api_key:
+        return None
+    try:
+        import requests
+        headers = {
+            'X-CMC_PRO_API_KEY': api_key.strip(),
+            'Accept': 'application/json'
+        }
+        url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+        params = {'symbol': clean_sym}
+        resp = requests.get(url, headers=headers, params=params, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            sym_data = data.get('data', {}).get(clean_sym, {})
+            if isinstance(sym_data, list) and len(sym_data) > 0:
+                sym_data = sym_data[0]
+            if sym_data:
+                quote_usd = sym_data.get('quote', {}).get('USD', {})
+                return {
+                    'name': sym_data.get('name', clean_sym),
+                    'last_updated': sym_data.get('last_updated', ''),
+                    'price': safe_float(quote_usd.get('price', 0.0)),
+                    'volume_24h': safe_float(quote_usd.get('volume_24h', 0.0)),
+                    'volume_change_24h': safe_float(quote_usd.get('volume_change_24h', 0.0)),
+                    'percent_change_1h': safe_float(quote_usd.get('percent_change_1h', 0.0)),
+                    'percent_change_24h': safe_float(quote_usd.get('percent_change_24h', 0.0)),
+                    'market_cap': safe_float(quote_usd.get('market_cap', 0.0))
+                }
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=60)
+def fetch_kraken_ticker_stats(symbol, api_key=""):
+    clean_sym = symbol.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    pair_name = get_kraken_pair_name(clean_sym)
+    try:
+        import requests
+        url = "https://api.kraken.com/0/public/Ticker"
+        params = {'pair': pair_name}
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        if api_key:
+            headers['API-Key'] = api_key.strip()
+        resp = requests.get(url, params=params, headers=headers, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            if not data.get('error'):
+                res = data.get('result', {})
+                for k, v in res.items():
+                    last_pr = safe_float(v.get('c', [0])[0])
+                    vol_today = safe_float(v.get('v', [0, 0])[0])
+                    vol_24h = safe_float(v.get('v', [0, 0])[1])
+                    vwap_24h = safe_float(v.get('p', [0, 0])[1])
+                    open_today = safe_float(v.get('o', 0.0))
+                    
+                    vol_24h_usd = vol_24h * (vwap_24h if vwap_24h > 0 else last_pr)
+                    vol_prev_est = max(0.001, vol_24h - vol_today)
+                    vol_chg_pct = ((vol_today - vol_prev_est) / vol_prev_est) * 100.0 if vol_prev_est > 0 else 0.0
+                    price_chg_24h = ((last_pr - open_today) / open_today) * 100.0 if open_today > 0 else 0.0
+                    
+                    return {
+                        'price': last_pr,
+                        'volume_24h': vol_24h_usd if vol_24h_usd > 0 else vol_24h,
+                        'volume_change_24h': vol_chg_pct,
+                        'percent_change_24h': price_chg_24h
+                    }
+    except Exception:
+        pass
+    return None
+
 def get_change_pct(df, days_lookback):
     if df is None or len(df) < 2:
         return None
@@ -2237,10 +2389,17 @@ def main(stock, data_source="yfinance", api_key=""):
     else:
         st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
 
-    # Ringkasan 3 kolom di bawah header
+    # Ringkasan Metrik di bawah header
     curr_prefix = "$ " if (is_intraday or stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
     last_vol = 0.0
     last_pr = 0.0
+    vol_24h_val = 0.0
+    vol_chg_24h = None
+    mcap_str = "-"
+    last_dt = "-"
+    last_pr_str = "-"
+    
+    # 1. Fetch live historical / snapshot data from dedicated API
     try:
         if is_kraken:
             quick_df = fetch_kraken_data(clean_sym, api_key=api_key, interval="1m", count=1000)
@@ -2258,16 +2417,61 @@ def main(stock, data_source="yfinance", api_key=""):
             last_pr_str = smart_format(last_pr, prefix=curr_prefix)
             if 'Volume' in quick_df.columns:
                 last_vol = safe_float(quick_df['Volume'].iloc[-1])
-        else:
-            last_dt = "-"
-            last_pr_str = "-"
+                last_24h_slice = get_time_period_slice(quick_df, pd.Timedelta(days=1)) if is_intraday else quick_df.tail(1)
+                if not last_24h_slice.empty:
+                    vol_24h_val = float(last_24h_slice['Volume'].sum())
+                else:
+                    vol_24h_val = last_vol
+                
+                if len(quick_df) >= 2:
+                    v_now = safe_float(quick_df['Volume'].iloc[-1])
+                    v_prev = safe_float(quick_df['Volume'].iloc[-2])
+                    vol_chg_24h = ((v_now - v_prev) / v_prev) * 100.0 if v_prev > 0 else 0.0
     except Exception:
-        last_dt = "-"
-        last_pr_str = "-"
+        quick_df = pd.DataFrame()
 
-    mcap_val = get_market_cap(stock, last_close=last_pr, last_volume=last_vol)
-    mcap_str = format_market_cap(mcap_val, curr_prefix=curr_prefix)
+    # 2. Query dedicated live ticker stats for CMC and Kraken if applicable
+    cmc_quote = None
+    kraken_stats = None
+    if is_cmc and api_key:
+        cmc_quote = fetch_cmc_latest_quote(clean_sym, api_key=api_key)
+        if cmc_quote:
+            if cmc_quote.get('last_updated'):
+                last_dt = format_timestamp_for_plot(pd.to_datetime(cmc_quote['last_updated']))
+            if cmc_quote.get('price', 0) > 0:
+                last_pr = cmc_quote['price']
+                last_pr_str = smart_format(last_pr, prefix=curr_prefix)
+            if cmc_quote.get('volume_24h', 0) > 0:
+                vol_24h_val = cmc_quote['volume_24h']
+            if cmc_quote.get('volume_change_24h') is not None:
+                vol_chg_24h = cmc_quote['volume_change_24h']
+            if cmc_quote.get('market_cap', 0) > 0:
+                mcap_str = format_market_cap(cmc_quote['market_cap'], curr_prefix=curr_prefix)
+    elif is_kraken:
+        kraken_stats = fetch_kraken_ticker_stats(clean_sym, api_key=api_key)
+        if kraken_stats:
+            if kraken_stats.get('price', 0) > 0:
+                last_pr = kraken_stats['price']
+                last_pr_str = smart_format(last_pr, prefix=curr_prefix)
+            if kraken_stats.get('volume_24h', 0) > 0:
+                vol_24h_val = kraken_stats['volume_24h']
+            if kraken_stats.get('volume_change_24h') is not None:
+                vol_chg_24h = kraken_stats['volume_change_24h']
 
+    if mcap_str == "-":
+        mcap_val = get_market_cap(stock, last_close=last_pr, last_volume=last_vol)
+        mcap_str = format_market_cap(mcap_val, curr_prefix=curr_prefix)
+
+    if not quick_df.empty:
+        duration_str = format_duration_human_readable(quick_df.index[0], quick_df.index[-1])
+        data_count_str = f"Total {len(quick_df):,} Baris"
+    else:
+        duration_str = "-"
+        data_count_str = "0 Baris"
+
+    vol_24h_str = format_volume_val(vol_24h_val, curr_prefix=curr_prefix)
+
+    # Baris 1: Informasi Tanggal, Harga & Market Cap
     col_sum1, col_sum2, col_sum3 = st.columns(3)
     with col_sum1:
         st.metric("Tanggal / Waktu Terakhir", last_dt)
@@ -2275,6 +2479,19 @@ def main(stock, data_source="yfinance", api_key=""):
         st.metric("Harga Terakhir", last_pr_str)
     with col_sum3:
         st.metric("Market Cap", mcap_str)
+
+    # Baris 2: Banyak Data (Durasi), Volume 24 Jam & Perubahan Volume 24 Jam
+    col_sum4, col_sum5, col_sum6 = st.columns(3)
+    with col_sum4:
+        st.metric("Banyak Data (Durasi Waktu)", duration_str, help=f"Rentang waktu keseluruhan data yang dimuat: {data_count_str}")
+    with col_sum5:
+        st.metric("Volume Transaksi (24 Jam)", vol_24h_str)
+    with col_sum6:
+        if vol_chg_24h is not None and not pd.isna(vol_chg_24h):
+            v_sign = "+" if vol_chg_24h >= 0 else ""
+            st.metric("Perubahan Volume (24 Jam)", f"{v_sign}{vol_chg_24h:.2f}%", delta=f"{v_sign}{vol_chg_24h:.2f}%")
+        else:
+            st.metric("Perubahan Volume (24 Jam)", "-")
 
     # Mini Trend Metrics: If Intraday (CMC / Kraken) show 10 metrics (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)
     if not quick_df.empty and len(quick_df) >= 2:
@@ -2832,28 +3049,16 @@ def main(stock, data_source="yfinance", api_key=""):
 
             if not data.empty:
                 actual_days = (data.index[-1] - data.index[0]).days
-                y_cnt = actual_days // 365
-                rem_days = actual_days % 365
-                m_cnt = rem_days // 30
-                rem_days2 = rem_days % 30
-                w_cnt = rem_days2 // 7
-                d_cnt = rem_days2 % 7
-                
-                parts = []
-                if y_cnt > 0: parts.append(f"{y_cnt} Tahun")
-                if m_cnt > 0: parts.append(f"{m_cnt} Bulan")
-                if w_cnt > 0: parts.append(f"{w_cnt} Minggu")
-                if d_cnt > 0 or not parts: parts.append(f"{d_cnt} Hari")
-                duration_str = " ".join(parts)
+                duration_str = format_duration_human_readable(data.index[0], data.index[-1])
             else:
                 actual_days = 0
-                duration_str = "0 Tahun 0 Bulan 0 Hari"
+                duration_str = "-"
 
         st.subheader("Data Pelatihan yang telah dipilih")
         if is_intraday:
             st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
         else:
-            st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
+            st.write(f"Jumlah Hari yang dipilih **{actual_days} hari** ({duration_str}).")
 
         st.write("Mulai")
         st.write(format_df_for_display(data.head(1)))
