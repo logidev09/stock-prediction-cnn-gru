@@ -161,6 +161,26 @@ def get_cmc_api_key_from_env_or_secrets():
     import os
     return os.environ.get("CMC_API_KEY", "")
 
+def get_kraken_api_key_from_env_or_secrets():
+    for k_name in ["KRAKEN_API_KEY", "KRAKEN_KEY", "kraken_api_key", "kraken_key"]:
+        try:
+            from kaggle_secrets import UserSecretsClient
+            user_secrets = UserSecretsClient()
+            sec = user_secrets.get_secret(k_name)
+            if sec:
+                return sec
+        except Exception:
+            pass
+        try:
+            if k_name in st.secrets:
+                return str(st.secrets[k_name]).strip()
+        except Exception:
+            pass
+        import os
+        if os.environ.get(k_name):
+            return os.environ.get(k_name).strip()
+    return ""
+
 PLOTLY_CHART_CONFIG = {
     'scrollZoom': True,
     'displayModeBar': True,
@@ -298,6 +318,94 @@ def fetch_coinmarketcap_data(symbol, api_key="", interval="1m", count=1000):
         except Exception:
             pass
 
+    if not df.empty:
+        df = ensure_datetime_index(df)
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col not in df.columns:
+                df[col] = df.iloc[:, 0]
+    return df
+
+def get_kraken_pair_name(symbol):
+    clean = symbol.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    pair_map = {
+        'BTC': 'XBTUSD',
+        'XBT': 'XBTUSD',
+        'ETH': 'ETHUSD',
+        'SOL': 'SOLUSD',
+        'XRP': 'XRPUSD',
+        'DOGE': 'DOGEUSD',
+        'ADA': 'ADAUSD',
+        'DOT': 'DOTUSD',
+        'LTC': 'LTCUSD',
+        'LINK': 'LINKUSD',
+        'AVAX': 'AVAXUSD',
+        'MATIC': 'MATICUSD',
+        'POL': 'POLUSD',
+        'BCH': 'BCHUSD',
+        'SHIB': 'SHIBUSD',
+        'UNI': 'UNIUSD',
+        'ATOM': 'ATOMUSD'
+    }
+    return pair_map.get(clean, f"{clean}USD")
+
+@st.cache_data(ttl=300)
+def fetch_kraken_data(symbol, api_key="", interval="1m", count=1000):
+    clean_sym = symbol.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
+    pair_name = get_kraken_pair_name(clean_sym)
+    
+    intv_map = {
+        '1m': 1, '3m': 5, '5m': 5, '15m': 15, '30m': 30,
+        '1h': 60, '1H': 60, '2h': 60, '2H': 60, '4h': 240, '4H': 240,
+        '12h': 720, '12H': 720, '1d': 1440, '1D': 1440, '1w': 10080, '1W': 10080
+    }
+    k_interval = intv_map.get(interval, 1)
+    
+    df = pd.DataFrame()
+    try:
+        import requests
+        url = "https://api.kraken.com/0/public/OHLC"
+        params = {'pair': pair_name, 'interval': k_interval}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        if api_key:
+            headers['API-Key'] = api_key.strip()
+            
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data_json = resp.json()
+            if not data_json.get('error'):
+                res = data_json.get('result', {})
+                pair_keys = [k for k in res.keys() if k != 'last']
+                if pair_keys:
+                    ohlc_list = res[pair_keys[0]]
+                    rows = []
+                    for item in ohlc_list:
+                        # item = [time, open, high, low, close, vwap, volume, count]
+                        rows.append({
+                            'Date': pd.to_datetime(item[0], unit='s'),
+                            'Open': safe_float(item[1]),
+                            'High': safe_float(item[2]),
+                            'Low': safe_float(item[3]),
+                            'Close': safe_float(item[4]),
+                            'Volume': safe_float(item[6])
+                        })
+                    df = pd.DataFrame(rows)
+                    if not df.empty:
+                        df = df.set_index('Date').sort_index()
+    except Exception:
+        pass
+        
+    # Fallback to yfinance jika pair belum terdaftar atau timeout
+    if df.empty or len(df) < 30:
+        try:
+            yf_ticker = f"{clean_sym}-USD"
+            yf_interval = interval if interval in ['1m', '5m', '15m', '30m', '1h', '1d'] else '1m'
+            yf_period = '7d' if yf_interval == '1m' else ('30d' if yf_interval in ['5m', '15m', '30m'] else '60d')
+            df = yf.download(yf_ticker, period=yf_period, interval=yf_interval)
+            if not df.empty:
+                df = ensure_datetime_index(df)
+        except Exception:
+            pass
+            
     if not df.empty:
         df = ensure_datetime_index(df)
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
@@ -2115,20 +2223,26 @@ def main(stock, data_source="yfinance", api_key=""):
         st.session_state.current_stock = state_key
 
     is_cmc = (data_source == "coinmarketcap")
+    is_kraken = (data_source == "kraken")
+    is_intraday = (is_cmc or is_kraken)
     clean_sym = stock.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
-    asset_type = "Crypto" if (is_cmc or is_crypto_ticker(stock)) else "Saham"
+    asset_type = "Crypto" if (is_intraday or is_crypto_ticker(stock)) else "Saham"
 
-    if is_cmc:
+    if is_kraken:
+        st.header(f"Prediksi Harga {clean_sym} melalui Kraken API (CNN-GRU)")
+    elif is_cmc:
         st.header(f"Prediksi Harga {clean_sym} melalui Coinmarketcap (CNN-GRU)")
     else:
         st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
 
     # Ringkasan 3 kolom di bawah header
-    curr_prefix = "$ " if (is_cmc or stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
+    curr_prefix = "$ " if (is_intraday or stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
     last_vol = 0.0
     last_pr = 0.0
     try:
-        if is_cmc:
+        if is_kraken:
+            quick_df = fetch_kraken_data(clean_sym, api_key=api_key, interval="1m", count=1000)
+        elif is_cmc:
             quick_df = fetch_coinmarketcap_data(clean_sym, api_key=api_key, interval="1m", count=1000)
         elif crypto_yfinance and is_crypto_ticker(stock):
             quick_df = cyf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
@@ -2160,10 +2274,11 @@ def main(stock, data_source="yfinance", api_key=""):
     with col_sum3:
         st.metric("Market Cap", mcap_str)
 
-    # Mini Trend Metrics: If CMC show 10 metrics (1m, 5m, 30m, 1H, 12H, 1D, 1W, 1M, 90D, YTD)
+    # Mini Trend Metrics: If Intraday (CMC / Kraken) show 10 metrics (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)
     if not quick_df.empty and len(quick_df) >= 2:
-        if is_cmc:
-            render_coinmarketcap_mini_metrics(quick_df, clean_sym)
+        if is_intraday:
+            src_lbl = "Kraken" if is_kraken else "CoinMarketCap"
+            render_coinmarketcap_mini_metrics(quick_df, f"{clean_sym} ({src_lbl})")
         else:
             c_now = safe_float(quick_df['Close'].iloc[-1])
             c_prev = safe_float(quick_df['Close'].iloc[-2])
@@ -2361,24 +2476,26 @@ def main(stock, data_source="yfinance", api_key=""):
             ("YTD", timedelta(days=365))
         ]
 
-        if is_cmc:
-            if 'cmc_end_offset_btn' not in st.session_state:
-                st.session_state.cmc_end_offset_btn = None
-            if 'cmc_preset_selected' not in st.session_state:
-                st.session_state.cmc_preset_selected = "30 T"
+        if is_intraday:
+            end_btn_key = f"{data_source}_end_offset_btn"
+            preset_sel_key = f"{data_source}_preset_selected"
+            if end_btn_key not in st.session_state:
+                st.session_state[end_btn_key] = None
+            if preset_sel_key not in st.session_state:
+                st.session_state[preset_sel_key] = "30 T"
 
             # 1. Pilihan Tanggal / Waktu Selesai (Hari ini / Uncheck Kalender & Tombol)
             latest_avail_dt = full_data.index[-1] if not full_data.empty else pd.Timestamp.now()
 
             col_chk, col_fresh = st.columns([1.1, 1.4])
             with col_chk:
-                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key="chk_use_today_cmc")
+                use_today_end = st.checkbox("Gunakan hingga tanggal terbaru (Hari ini)", value=True, key=f"chk_use_today_{data_source}")
             with col_fresh:
                 st.markdown(f"<div style='padding-top:4px;'>{get_data_freshness_badge(latest_avail_dt)}</div>", unsafe_allow_html=True)
 
             if use_today_end:
                 end_datetime = latest_avail_dt
-                st.session_state.cmc_end_offset_btn = None
+                st.session_state[end_btn_key] = None
             else:
                 st.markdown("**Pilih Tanggal / Waktu Selesai (Data Historis):**")
                 st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir:</b></small>", unsafe_allow_html=True)
@@ -2389,19 +2506,19 @@ def main(stock, data_source="yfinance", api_key=""):
                 for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
                     with btn_cols_1[b_i]:
                         lbl_styled = format_quick_button_label(t_lbl)
-                        b_type = "primary" if st.session_state.cmc_end_offset_btn == t_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_end_cmc_{t_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.cmc_end_offset_btn = t_lbl
+                        b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
+                            st.session_state[end_btn_key] = t_lbl
                             st.rerun()
                 for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[6:]):
                     with btn_cols_2[b_i]:
                         lbl_styled = format_quick_button_label(t_lbl)
-                        b_type = "primary" if st.session_state.cmc_end_offset_btn == t_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_end_cmc_{t_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.cmc_end_offset_btn = t_lbl
+                        b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
+                        if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
+                            st.session_state[end_btn_key] = t_lbl
                             st.rerun()
 
-                selected_end_offset = st.session_state.cmc_end_offset_btn
+                selected_end_offset = st.session_state[end_btn_key]
                 if selected_end_offset:
                     offset_dict = dict(END_TIME_OFFSETS)
                     delta_val = offset_dict.get(selected_end_offset, timedelta(0))
@@ -2414,11 +2531,12 @@ def main(stock, data_source="yfinance", api_key=""):
                         value=default_end_d,
                         min_value=date(2010, 1, 1),
                         max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
-                        key="cmc_cal_end_date"
+                        key=f"{data_source}_cal_end_date"
                     )
                     end_datetime = pd.to_datetime(end_date_selected) + pd.Timedelta(hours=23, minutes=59, seconds=59)
 
             # 2. Pilihan Metode Rentang Data Pelatihan
+            src_name = "Kraken API" if is_kraken else "CoinMarketCap"
             cmc_method_options = [
                 "Pilihan Cepat Rentang Waktu (1m - 30T)",
                 "Gunakan Jumlah Tahun / Bulan / Minggu / Hari / Jam / Menit Terakhir",
@@ -2426,7 +2544,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 "Pilih Tanggal dengan Kalender"
             ]
             selected_cmc_method = st.radio(
-                "Pilihan Metode Memilih Data Pelatihan (CoinMarketCap):",
+                f"Pilihan Metode Memilih Data Pelatihan ({src_name}):",
                 options=cmc_method_options,
                 index=0
             )
@@ -2441,24 +2559,24 @@ def main(stock, data_source="yfinance", api_key=""):
                 r_btn3 = st.columns(6)
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[:6]):
                     with r_btn1[idx_k]:
-                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.cmc_preset_selected = k_lbl
+                        b_type = "primary" if st.session_state[preset_sel_key] == k_lbl else "secondary"
+                        if st.button(k_lbl, key=f"btn_p_{data_source}_{k_lbl}", type=b_type, use_container_width=True):
+                            st.session_state[preset_sel_key] = k_lbl
                             st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[6:12]):
                     with r_btn2[idx_k]:
-                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.cmc_preset_selected = k_lbl
+                        b_type = "primary" if st.session_state[preset_sel_key] == k_lbl else "secondary"
+                        if st.button(k_lbl, key=f"btn_p_{data_source}_{k_lbl}", type=b_type, use_container_width=True):
+                            st.session_state[preset_sel_key] = k_lbl
                             st.rerun()
                 for idx_k, k_lbl in enumerate(cmc_preset_keys[12:]):
                     with r_btn3[idx_k]:
-                        b_type = "primary" if st.session_state.cmc_preset_selected == k_lbl else "secondary"
-                        if st.button(k_lbl, key=f"btn_p_cmc_{k_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.cmc_preset_selected = k_lbl
+                        b_type = "primary" if st.session_state[preset_sel_key] == k_lbl else "secondary"
+                        if st.button(k_lbl, key=f"btn_p_{data_source}_{k_lbl}", type=b_type, use_container_width=True):
+                            st.session_state[preset_sel_key] = k_lbl
                             st.rerun()
 
-                active_cmc_preset = st.session_state.cmc_preset_selected
+                active_cmc_preset = st.session_state[preset_sel_key]
                 st.info(f"⏱️ Rentang Waktu Pelatihan Terpilih: **{active_cmc_preset}**")
                 total_duration = PRESET_DURATIONS[active_cmc_preset]
                 duration_str = f"Preset {active_cmc_preset}"
@@ -2468,18 +2586,18 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.markdown("Masukkan jumlah tahun, bulan, minggu, hari, jam, atau menit terakhir yang diinginkan (tidak dibatasi):")
                 c_cmc_n1, c_cmc_n2, c_cmc_n3 = st.columns(3)
                 with c_cmc_n1:
-                    input_cmc_years = st.number_input("📅 Jumlah Tahun Terakhir:", min_value=0, value=0, step=1, key="cmc_num_years")
+                    input_cmc_years = st.number_input("📅 Jumlah Tahun Terakhir:", min_value=0, value=0, step=1, key=f"{data_source}_num_years")
                 with c_cmc_n2:
-                    input_cmc_months = st.number_input("📅 Jumlah Bulan Terakhir:", min_value=0, value=0, step=1, key="cmc_num_months")
+                    input_cmc_months = st.number_input("📅 Jumlah Bulan Terakhir:", min_value=0, value=0, step=1, key=f"{data_source}_num_months")
                 with c_cmc_n3:
-                    input_cmc_weeks = st.number_input("📅 Jumlah Minggu Terakhir:", min_value=0, value=0, step=1, key="cmc_num_weeks")
+                    input_cmc_weeks = st.number_input("📅 Jumlah Minggu Terakhir:", min_value=0, value=0, step=1, key=f"{data_source}_num_weeks")
                 c_cmc_n4, c_cmc_n5, c_cmc_n6 = st.columns(3)
                 with c_cmc_n4:
-                    input_cmc_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=30, step=1, key="cmc_num_days")
+                    input_cmc_days = st.number_input("📅 Jumlah Hari Terakhir:", min_value=0, value=30, step=1, key=f"{data_source}_num_days")
                 with c_cmc_n5:
-                    input_cmc_hours = st.number_input("⏰ Jumlah Jam Terakhir:", min_value=0, value=0, step=1, key="cmc_num_hours")
+                    input_cmc_hours = st.number_input("⏰ Jumlah Jam Terakhir:", min_value=0, value=0, step=1, key=f"{data_source}_num_hours")
                 with c_cmc_n6:
-                    input_cmc_mins = st.number_input("⏱️ Jumlah Menit Terakhir:", min_value=0, value=0, step=1, key="cmc_num_mins")
+                    input_cmc_mins = st.number_input("⏱️ Jumlah Menit Terakhir:", min_value=0, value=0, step=1, key=f"{data_source}_num_mins")
 
                 total_cmc_days = (input_cmc_years * 365) + (input_cmc_months * 30) + (input_cmc_weeks * 7) + input_cmc_days
                 total_duration = timedelta(days=total_cmc_days, hours=input_cmc_hours, minutes=input_cmc_mins)
@@ -2500,14 +2618,14 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.markdown("Pilih rentang waktu pelatihan menggunakan slider:")
                 c_sl1, c_sl2, c_sl3 = st.columns(3)
                 with c_sl1:
-                    years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30, key="cmc_sl_yr")
-                    months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0, key="cmc_sl_mo")
+                    years_ago = st.slider('📅 Tahun (0 - 30):', 0, 30, 30, key=f"{data_source}_sl_yr")
+                    months_ago = st.slider('📅 Bulan Tambahan (0 - 11):', 0, 11, 0, key=f"{data_source}_sl_mo")
                 with c_sl2:
-                    weeks_ago = st.slider('📅 Minggu Tambahan (0 - 4):', 0, 4, 0, key="cmc_sl_wk")
-                    days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0, key="cmc_sl_dy")
+                    weeks_ago = st.slider('📅 Minggu Tambahan (0 - 4):', 0, 4, 0, key=f"{data_source}_sl_wk")
+                    days_ago = st.slider('📅 Hari Tambahan (0 - 30):', 0, 30, 0, key=f"{data_source}_sl_dy")
                 with c_sl3:
-                    hours_ago = st.slider('⏰ Jam Tambahan (0 - 23):', 0, 23, 0, key="cmc_sl_hr")
-                    mins_ago = st.slider('⏱️ Menit Tambahan (0 - 59):', 0, 59, 0, key="cmc_sl_mn")
+                    hours_ago = st.slider('⏰ Jam Tambahan (0 - 23):', 0, 23, 0, key=f"{data_source}_sl_hr")
+                    mins_ago = st.slider('⏱️ Menit Tambahan (0 - 59):', 0, 59, 0, key=f"{data_source}_sl_mn")
 
                 total_days = (years_ago * 365) + (months_ago * 30) + (weeks_ago * 7) + days_ago
                 total_duration = timedelta(days=total_days, hours=hours_ago, minutes=mins_ago)
@@ -2525,7 +2643,7 @@ def main(stock, data_source="yfinance", api_key=""):
                         value=default_start,
                         min_value=date(2010, 1, 1),
                         max_value=end_datetime.date(),
-                        key="cmc_custom_start_cal"
+                        key=f"{data_source}_custom_start_cal"
                     )
                 with c_cal2:
                     cal_end = st.date_input(
@@ -2533,7 +2651,7 @@ def main(stock, data_source="yfinance", api_key=""):
                         value=end_datetime.date(),
                         min_value=cal_start,
                         max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
-                        key="cmc_custom_end_cal"
+                        key=f"{data_source}_custom_end_cal"
                     )
                 start_datetime = pd.to_datetime(cal_start)
                 end_datetime = pd.to_datetime(cal_end) + pd.Timedelta(hours=23, minutes=59, seconds=59)
@@ -2730,7 +2848,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 duration_str = "0 Tahun 0 Bulan 0 Hari"
 
         st.subheader("Data Pelatihan yang telah dipilih")
-        if is_cmc:
+        if is_intraday:
             st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
         else:
             st.write(f"Jumlah Hari yang dipilih **{actual_days}** ({duration_str}).")
@@ -2761,10 +2879,10 @@ def main(stock, data_source="yfinance", api_key=""):
                 render_plotly_with_tools(fig_train_comp, key="fig_train_data_comp_indicators")
 
         # Toggle Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta
-        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)" if is_cmc else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
+        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)" if is_intraday else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
         with st.expander(expander_title, expanded=False):
             if not data.empty:
-                if is_cmc:
+                if is_intraday:
                     period_slices = [
                         ("1m", get_time_period_slice(data, timedelta(minutes=1)), get_time_change_pct(data, timedelta(minutes=1))),
                         ("3m", get_time_period_slice(data, timedelta(minutes=3)), get_time_change_pct(data, timedelta(minutes=3))),
@@ -2947,7 +3065,7 @@ def main(stock, data_source="yfinance", api_key=""):
 
     with st.expander("3. Pra-pemrosesan Data"):
 
-        is_valid_data = len(data) >= 30 if is_cmc else (days >= 120)
+        is_valid_data = len(data) >= 30 if is_intraday else (days >= 120)
 
         if is_valid_data:
             st.info(f"⚡ **Penyesuaian Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):** Kategori **{dataset_category_desc}** aktif. {act_explanation}", icon=":material/auto_awesome:")
@@ -2964,7 +3082,7 @@ def main(stock, data_source="yfinance", api_key=""):
                     "Panjang Sekuens (Lookback Window) [Langkah Data]",
                     options=valid_seq_options,
                     value=default_seq,
-                    key=f"seq_slider_{is_cmc}_{len(data)}"
+                    key=f"seq_slider_{data_source}_{len(data)}"
                 )
                 st.info(f'Rekomendasi Otomatis ({dataset_category_desc}): **{default_seq} Langkah Data** (Disesuaikan otomatis untuk {len(data)} baris data).', icon=":material/recommend:")
                 st.warning('Ket: Sekuens terlalu pendek kehilangan konteks tren, sekuens terlalu panjang menambah dimensi & mengurangi jumlah sampel data.', icon=":material/timeline:")
@@ -3026,7 +3144,7 @@ def main(stock, data_source="yfinance", api_key=""):
 
             st.success("Pra-pemrosesan Data selesai!")
         else:
-            if is_cmc:
+            if is_intraday:
                 st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
             else:
                 st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
@@ -3154,7 +3272,7 @@ def main(stock, data_source="yfinance", api_key=""):
             st.success("Perancangan Model CNN-GRU selesai!")
 
         else:
-            if is_cmc:
+            if is_intraday:
                 st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
             else:
                 st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
@@ -3310,7 +3428,7 @@ def main(stock, data_source="yfinance", api_key=""):
                 def_opts = [o for o in def_opts if o in valid_opts]
                 return valid_opts, def_opts
 
-            if is_cmc:
+            if is_intraday:
                 forecast_options_dict, default_options = initialize_cmc_forecast_options(x_test)
             else:
                 forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
@@ -3382,7 +3500,7 @@ def main(stock, data_source="yfinance", api_key=""):
                     btn_check = 1
 
         else:
-            if is_cmc:
+            if is_intraday:
                 st.warning('Harus Memilih Rentang Waktu Minimal 30 Menit atau 30 Baris Data', icon=":material/exclamation:")
             else:
                 st.warning('Harus Memilih Jumlah Hari Minimal 4 Bulan atau 120 hari', icon=":material/exclamation:")
@@ -3544,7 +3662,7 @@ def main(stock, data_source="yfinance", api_key=""):
                     time_estimate.text(f"Estimasi waktu tersisa: {remaining_time:.2f} detik")
                     last_date = data.index[-1]
                     
-                    if is_cmc:
+                    if is_intraday:
                         if len(data) >= 2:
                             step_td = data.index[-1] - data.index[-2]
                             if step_td <= pd.Timedelta(0):
@@ -3823,13 +3941,14 @@ if __name__ == "__main__":
                 options=[
                     "Input Saham Custom",
                     "Input Crypto (CoinMarketCap)",
+                    "Input Crypto (Kraken API)",
                     "PT Bank Mandiri Tbk (Bank Mandiri)",
                     "PT Bank Rakyat Indonesia Tbk (BRI)",
                     "PT Bank Central Asia Tbk (BCA)",
                     "PT Bank Negara Indonesia Tbk (BNI)",
                     "PT Bank Syariah Indonesia Tbk (BSI)"
                 ],
-                icons=["search", "currency-bitcoin", "bank", "bank", "bank", "bank", "bank"],
+                icons=["search", "currency-bitcoin", "wallet2", "bank", "bank", "bank", "bank", "bank"],
                 default_index=st.session_state.selected_index_pred,
                 manual_select=manual_select_pred,
                 orientation="vertikal"
@@ -3838,6 +3957,7 @@ if __name__ == "__main__":
             pred_options = [
                 "Input Saham Custom",
                 "Input Crypto (CoinMarketCap)",
+                "Input Crypto (Kraken API)",
                 "PT Bank Mandiri Tbk (Bank Mandiri)",
                 "PT Bank Rakyat Indonesia Tbk (BRI)",
                 "PT Bank Central Asia Tbk (BCA)",
@@ -3849,7 +3969,7 @@ if __name__ == "__main__":
             
         st.markdown('**Manual**')
         st.markdown('- **1. Pilih Tab Prediksi Saham:** Untuk Melakukan Forecasting')
-        st.markdown('- **2. Pilih Sumber Data & Simbol Aset:** yFinance (Harian) atau CoinMarketCap (Intraday Jam/Menit/Detik)')
+        st.markdown('- **2. Pilih Sumber Data & Simbol Aset:** yFinance (Harian), CoinMarketCap (Intraday API), atau Kraken (Intraday REST API)')
         st.markdown('- **3. Scroll ke bawah halaman:** Untuk Memilih Periode Forecasting')
         st.markdown('- **4. Tekan Tombol Latih Model:** Untuk Melakukan Pelatihan Model Forecasting')
         st.markdown('- **5. Lihat Interpretasi dan Pelaporan Hasil:** Menampilkan Kesimpulan Prediksi')
@@ -4106,6 +4226,90 @@ if menu_type == "Prediksi Saham":
         if cmc_symbol:
             st.cache_data.clear()
             main(cmc_symbol, data_source="coinmarketcap", api_key=cmc_key_input)
+        else:
+            st.warning("Silakan masukkan simbol crypto terlebih dahulu")
+
+    elif selected == "Input Crypto (Kraken API)":
+        if 'kraken_crypto_input' not in st.session_state:
+            st.session_state.kraken_crypto_input = "BTC"
+
+        st.markdown("<h1 style='text-align: left; color: #5841D8;'>Prediksi Crypto melalui Kraken REST API</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode aset crypto dan API Key Kraken (Opsional untuk data pasar publik) untuk analisis data frekuensi tinggi (Menit/Jam/Harian) langsung dari bursa Kraken.</p>", unsafe_allow_html=True)
+        
+        default_kraken_key = get_kraken_api_key_from_env_or_secrets()
+        kraken_key_input = st.text_input("🔑 Masukkan Kraken API Key", value=default_kraken_key, type="password", placeholder="Masukkan API Key Kraken Anda (Opsional untuk public market data)...")
+        if default_kraken_key:
+            st.caption("✅ Kraken API Key terdeteksi dari Secrets / Environment.")
+        
+        with st.expander("🛡️ Panduan Pengaturan Izin (Permissions) Kraken API Key yang Aman", expanded=False):
+            st.markdown("""
+            **Rekomendasi Konfigurasi Izin API Key di Kraken:**
+            Untuk keperluan membaca data pasar (*Market Data Reading*):
+            - ✅ **Funds permissions**: **KOSONGKAN SEMUA** (*Query / Deposit / Withdraw TIDAK DIBUTUHKAN*).
+            - ❌ **Withdraw / Add withdrawal addresses**: **OFF / JANGAN DICENTANG** *(Demi menjaga keamanan saldo aset Anda)*.
+            - ✅ **Orders and trades**: **KOSONGKAN / OFF** (*Tidak perlu izin trading atau cancel order*).
+            - ✅ **Data permissions**: Boleh centang **`Export data`** atau **`Query ledger entries`** (atau kosongkan untuk mode Public REST).
+            - ✅ **WebSocket interface**: **ON / OFF** (Bebas).
+            - 💡 *Catatan:* Data harga candlestick Kraken adalah data publik, sehingga tanpa API Key pun data tetap dapat diakses dengan cepat.
+            """)
+
+        st.write("**Pilihan Kripto Populer (Kraken API)**")
+        k_cols1 = st.columns(4)
+        with k_cols1[0]:
+            if st.button("BTC (Bitcoin)", key="k_btc"):
+                st.session_state.kraken_crypto_input = "BTC"
+                st.rerun()
+        with k_cols1[1]:
+            if st.button("ETH (Ethereum)", key="k_eth"):
+                st.session_state.kraken_crypto_input = "ETH"
+                st.rerun()
+        with k_cols1[2]:
+            if st.button("SOL (Solana)", key="k_sol"):
+                st.session_state.kraken_crypto_input = "SOL"
+                st.rerun()
+        with k_cols1[3]:
+            if st.button("BNB (Binance)", key="k_bnb"):
+                st.session_state.kraken_crypto_input = "BNB"
+                st.rerun()
+                
+        k_cols2 = st.columns(4)
+        with k_cols2[0]:
+            if st.button("XRP (Ripple)", key="k_xrp"):
+                st.session_state.kraken_crypto_input = "XRP"
+                st.rerun()
+        with k_cols2[1]:
+            if st.button("DOGE (Dogecoin)", key="k_doge"):
+                st.session_state.kraken_crypto_input = "DOGE"
+                st.rerun()
+        with k_cols2[2]:
+            if st.button("ADA (Cardano)", key="k_ada"):
+                st.session_state.kraken_crypto_input = "ADA"
+                st.rerun()
+        with k_cols2[3]:
+            if st.button("DOT (Polkadot)", key="k_dot"):
+                st.session_state.kraken_crypto_input = "DOT"
+                st.rerun()
+                
+        st.write("")
+        st.markdown("**Masukkan Simbol Kripto (Kraken)**")
+        col_k_in, col_k_btn = st.columns([5, 1])
+        with col_k_in:
+            kraken_symbol = st.text_input(
+                "Masukkan Simbol Kripto",
+                value=st.session_state.kraken_crypto_input,
+                placeholder="Contoh: BTC, ETH, DOGE, SOL, XRP, ADA",
+                label_visibility="collapsed",
+                key="kraken_sym_in"
+            )
+        with col_k_btn:
+            st.button("Enter 🚀", type="primary", use_container_width=True, key="btn_kraken_enter")
+            
+        if kraken_symbol != st.session_state.kraken_crypto_input:
+            st.session_state.kraken_crypto_input = kraken_symbol
+            
+        if kraken_symbol:
+            st.cache_data.clear()
+            main(kraken_symbol, data_source="kraken", api_key=kraken_key_input)
         else:
             st.warning("Silakan masukkan simbol crypto terlebih dahulu")
     
