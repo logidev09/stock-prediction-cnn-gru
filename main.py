@@ -3516,41 +3516,110 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
             else:
                 st.markdown("**Pilih Tanggal / Waktu Selesai (Data Historis):**")
                 st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Data Terakhir:</b></small>", unsafe_allow_html=True)
-                
-                # Tombol Cepat Titik Akhir (1m - YTD) (Pewarnaan khusus 1H, 4H, 1D pada titik akhir)
-                btn_cols_1 = st.columns(6)
-                btn_cols_2 = st.columns(6)
-                for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
-                    with btn_cols_1[b_i]:
-                        lbl_styled = format_quick_button_label(t_lbl)
-                        b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
-                            st.session_state[end_btn_key] = t_lbl
-                            st.rerun()
-                for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[6:]):
-                    with btn_cols_2[b_i]:
-                        lbl_styled = format_quick_button_label(t_lbl)
-                        b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
-                            st.session_state[end_btn_key] = t_lbl
-                            st.rerun()
 
-                selected_end_offset = st.session_state[end_btn_key]
-                if selected_end_offset:
-                    offset_dict = dict(END_TIME_OFFSETS)
-                    delta_val = offset_dict.get(selected_end_offset, timedelta(0))
-                    end_datetime = latest_avail_dt - delta_val
-                    st.info(f"📍 Titik Akhir Terpilih via Tombol: **{selected_end_offset} yang lalu** (Per: `{format_timestamp_for_plot(end_datetime)}`).")
+                end_method_options = [
+                    "Pilihan Cepat Rentang Waktu (1m - YTD)",
+                    "Gunakan Jumlah Tahun / Bulan / Minggu / Hari / Jam / Menit Terakhir",
+                    "Rentang Slider (Tahun, Bulan, Minggu, Hari, Jam, Menit)",
+                    "Pilih Tanggal dengan Kalender"
+                ]
+                selected_end_method = st.radio(
+                    "Pilihan Metode Menentukan Titik Akhir:",
+                    options=end_method_options,
+                    index=0,
+                    key=f"{data_source}_end_method"
+                )
+
+                if selected_end_method == "Pilihan Cepat Rentang Waktu (1m - YTD)":
+                    st.markdown("<small><b>Pilih Cepat via Tombol:</b></small>", unsafe_allow_html=True)
+                    btn_cols_1 = st.columns(6)
+                    btn_cols_2 = st.columns(6)
+                    for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[:6]):
+                        with btn_cols_1[b_i]:
+                            lbl_styled = format_quick_button_label(t_lbl)
+                            b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
+                            if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
+                                st.session_state[end_btn_key] = t_lbl
+                                st.rerun()
+                    for b_i, (t_lbl, t_delta) in enumerate(END_TIME_OFFSETS[6:]):
+                        with btn_cols_2[b_i]:
+                            lbl_styled = format_quick_button_label(t_lbl)
+                            b_type = "primary" if st.session_state[end_btn_key] == t_lbl else "secondary"
+                            if st.button(lbl_styled, key=f"btn_end_{data_source}_{t_lbl}", type=b_type, use_container_width=True):
+                                st.session_state[end_btn_key] = t_lbl
+                                st.rerun()
+
+                    selected_end_offset = st.session_state[end_btn_key]
+                    if selected_end_offset:
+                        offset_dict = dict(END_TIME_OFFSETS)
+                        delta_val = offset_dict.get(selected_end_offset, timedelta(0))
+                        end_datetime = latest_avail_dt - delta_val
+                        st.info(f"Titik Akhir Terpilih via Tombol: **{selected_end_offset} yang lalu** (Per: `{format_timestamp_for_plot(end_datetime)}`).")
+                    else:
+                        end_datetime = latest_avail_dt
+                        st.caption("Belum ada tombol dipilih — memakai data terakhir (WIB).")
+
+                elif selected_end_method == "Gunakan Jumlah Tahun / Bulan / Minggu / Hari / Jam / Menit Terakhir":
+                    st.markdown("Masukkan seberapa jauh titik akhir mundur dari data terakhir (0 = data terakhir):")
+                    c_e1, c_e2, c_e3 = st.columns(3)
+                    with c_e1:
+                        end_in_years = st.number_input("Tahun:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_years")
+                    with c_e2:
+                        end_in_months = st.number_input("Bulan:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_months")
+                    with c_e3:
+                        end_in_weeks = st.number_input("Minggu:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_weeks")
+                    c_e4, c_e5, c_e6 = st.columns(3)
+                    with c_e4:
+                        end_in_days = st.number_input("Hari:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_days")
+                    with c_e5:
+                        end_in_hours = st.number_input("Jam:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_hours")
+                    with c_e6:
+                        end_in_mins = st.number_input("Menit:", min_value=0, value=0, step=1, key=f"{data_source}_end_num_mins")
+                    end_back = timedelta(days=(end_in_years * 365 + end_in_months * 30 + end_in_weeks * 7 + end_in_days), hours=end_in_hours, minutes=end_in_mins)
+                    end_datetime = latest_avail_dt - end_back
+                    st.info(f"Titik Akhir: **{format_timestamp_for_plot(end_datetime)}** (mundur {end_back} dari data terakhir).")
+
+                elif selected_end_method == "Rentang Slider (Tahun, Bulan, Minggu, Hari, Jam, Menit)":
+                    st.markdown("Geser seberapa jauh titik akhir mundur dari data terakhir:")
+                    c_es1, c_es2, c_es3 = st.columns(3)
+                    with c_es1:
+                        end_sl_years = st.slider('Tahun (0 - 30):', 0, 30, 0, key=f"{data_source}_end_sl_yr")
+                        end_sl_months = st.slider('Bulan (0 - 11):', 0, 11, 0, key=f"{data_source}_end_sl_mo")
+                    with c_es2:
+                        end_sl_weeks = st.slider('Minggu (0 - 4):', 0, 4, 0, key=f"{data_source}_end_sl_wk")
+                        end_sl_days = st.slider('Hari (0 - 30):', 0, 30, 0, key=f"{data_source}_end_sl_dy")
+                    with c_es3:
+                        end_sl_hours = st.slider('Jam (0 - 23):', 0, 23, 0, key=f"{data_source}_end_sl_hr")
+                        end_sl_mins = st.slider('Menit (0 - 59):', 0, 59, 0, key=f"{data_source}_end_sl_mn")
+                    end_back_sl = timedelta(days=(end_sl_years * 365 + end_sl_months * 30 + end_sl_weeks * 7 + end_sl_days), hours=end_sl_hours, minutes=end_sl_mins)
+                    end_datetime = latest_avail_dt - end_back_sl
+                    st.info(f"Titik Akhir: **{format_timestamp_for_plot(end_datetime)}** (mundur {end_back_sl} dari data terakhir).")
+
                 else:
                     default_end_d = latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today()
-                    end_date_selected = st.date_input(
-                        "📅 Tanggal Selesai Pelatihan (Kalender):",
-                        value=default_end_d,
-                        min_value=date(2010, 1, 1),
-                        max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
-                        key=f"{data_source}_cal_end_date"
-                    )
-                    end_datetime = pd.to_datetime(end_date_selected) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+                    try:
+                        _def_h = int(pd.to_datetime(latest_avail_dt).hour)
+                        _def_m = int(pd.to_datetime(latest_avail_dt).minute)
+                    except Exception:
+                        _def_h, _def_m = 23, 59
+                    c_ec1, c_ec2, c_ec3 = st.columns(3)
+                    with c_ec1:
+                        end_date_selected = st.date_input(
+                            "Tanggal Selesai (Kalender):",
+                            value=default_end_d,
+                            min_value=date(2010, 1, 1),
+                            max_value=latest_avail_dt.date() if hasattr(latest_avail_dt, 'date') else date.today(),
+                            key=f"{data_source}_cal_end_date"
+                        )
+                    with c_ec2:
+                        end_hour_selected = st.number_input("Jam (WIB):", min_value=0, max_value=23, value=_def_h, step=1, key=f"{data_source}_cal_end_hour")
+                    with c_ec3:
+                        end_min_selected = st.number_input("Menit (WIB):", min_value=0, max_value=59, value=_def_m, step=1, key=f"{data_source}_cal_end_min")
+                    end_datetime = pd.to_datetime(end_date_selected) + pd.Timedelta(hours=int(end_hour_selected), minutes=int(end_min_selected))
+                    if end_datetime > latest_avail_dt:
+                        end_datetime = latest_avail_dt
+                        st.warning("Tanggal/waktu melebihi data terakhir — dipakai data terakhir (WIB).", icon=":material/warning:")
+                    st.info(f"Titik Akhir via Kalender: **{format_timestamp_for_plot(end_datetime)}**.")
 
             # 2. Pilihan Metode Rentang Data Pelatihan
             src_name = "Kraken API" if is_kraken else "CoinMarketCap"
@@ -3709,37 +3778,84 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
             else:
                 st.markdown("**Pilih Tanggal Selesai Pelatihan:**")
                 st.markdown("<small><b>Tentukan Titik Akhir Berdasarkan Waktu Tersedia dari Tanggal Terakhir:</b></small>", unsafe_allow_html=True)
-                
-                yf_end_offsets = [
-                    ("1 D", timedelta(days=1)),
-                    ("1 W", timedelta(days=7)),
-                    ("1 M", timedelta(days=30)),
-                    ("90 D", timedelta(days=90)),
-                    ("YTD", timedelta(days=365))
-                ]
-                btn_yf_cols = st.columns(5)
-                for b_i, (t_lbl, t_delta) in enumerate(yf_end_offsets):
-                    with btn_yf_cols[b_i]:
-                        lbl_styled = format_quick_button_label(t_lbl)
-                        b_type = "primary" if st.session_state.yf_end_offset_btn == t_lbl else "secondary"
-                        if st.button(lbl_styled, key=f"btn_end_yf_{t_lbl}", type=b_type, use_container_width=True):
-                            st.session_state.yf_end_offset_btn = t_lbl
-                            st.rerun()
 
-                selected_yf_offset = st.session_state.yf_end_offset_btn
-                if selected_yf_offset:
-                    offset_dict = dict(yf_end_offsets)
-                    delta_val = offset_dict.get(selected_yf_offset, timedelta(0))
-                    end_date_obj = latest_avail_dt - delta_val
-                    st.info(f"📍 Tanggal Selesai Terpilih via Tombol: **{selected_yf_offset} yang lalu** (`{end_date_obj}`).")
+                yf_end_method_options = [
+                    "Pilihan Cepat Rentang Waktu (1D - YTD)",
+                    "Gunakan Jumlah Tahun / Bulan / Minggu / Hari Terakhir",
+                    "Rentang Slider (Tahun, Bulan, Minggu, Hari)",
+                    "Pilih Tanggal dengan Kalender"
+                ]
+                selected_yf_end_method = st.radio(
+                    "Pilihan Metode Menentukan Tanggal Selesai:",
+                    options=yf_end_method_options,
+                    index=0,
+                    key="yf_end_method"
+                )
+
+                if selected_yf_end_method == "Pilihan Cepat Rentang Waktu (1D - YTD)":
+                    yf_end_offsets = [
+                        ("1 D", timedelta(days=1)),
+                        ("1 W", timedelta(days=7)),
+                        ("1 M", timedelta(days=30)),
+                        ("90 D", timedelta(days=90)),
+                        ("YTD", timedelta(days=365))
+                    ]
+                    btn_yf_cols = st.columns(5)
+                    for b_i, (t_lbl, t_delta) in enumerate(yf_end_offsets):
+                        with btn_yf_cols[b_i]:
+                            lbl_styled = format_quick_button_label(t_lbl)
+                            b_type = "primary" if st.session_state.yf_end_offset_btn == t_lbl else "secondary"
+                            if st.button(lbl_styled, key=f"btn_end_yf_{t_lbl}", type=b_type, use_container_width=True):
+                                st.session_state.yf_end_offset_btn = t_lbl
+                                st.rerun()
+
+                    selected_yf_offset = st.session_state.yf_end_offset_btn
+                    if selected_yf_offset:
+                        offset_dict = dict(yf_end_offsets)
+                        delta_val = offset_dict.get(selected_yf_offset, timedelta(0))
+                        end_date_obj = latest_avail_dt - delta_val
+                        st.info(f"Tanggal Selesai Terpilih via Tombol: **{selected_yf_offset} yang lalu** (`{end_date_obj}`).")
+                    else:
+                        end_date_obj = latest_avail_dt
+                        st.caption("Belum ada tombol dipilih — memakai tanggal terakhir.")
+
+                elif selected_yf_end_method == "Gunakan Jumlah Tahun / Bulan / Minggu / Hari Terakhir":
+                    st.markdown("Masukkan seberapa jauh tanggal selesai mundur dari tanggal terakhir (0 = tanggal terakhir):")
+                    c_ye1, c_ye2, c_ye3, c_ye4 = st.columns(4)
+                    with c_ye1:
+                        yf_end_years = st.number_input("Tahun:", min_value=0, value=0, step=1, key="yf_end_num_years")
+                    with c_ye2:
+                        yf_end_months = st.number_input("Bulan:", min_value=0, value=0, step=1, key="yf_end_num_months")
+                    with c_ye3:
+                        yf_end_weeks = st.number_input("Minggu:", min_value=0, value=0, step=1, key="yf_end_num_weeks")
+                    with c_ye4:
+                        yf_end_days = st.number_input("Hari:", min_value=0, value=0, step=1, key="yf_end_num_days")
+                    end_date_obj = latest_avail_dt - timedelta(days=(yf_end_years * 365 + yf_end_months * 30 + yf_end_weeks * 7 + yf_end_days))
+                    st.info(f"Tanggal Selesai: **`{end_date_obj}`**.")
+
+                elif selected_yf_end_method == "Rentang Slider (Tahun, Bulan, Minggu, Hari)":
+                    st.markdown("Geser seberapa jauh tanggal selesai mundur dari tanggal terakhir:")
+                    c_ys1, c_ys2, c_ys3, c_ys4 = st.columns(4)
+                    with c_ys1:
+                        yf_end_sl_years = st.slider('Tahun (0 - 30):', 0, 30, 0, key="yf_end_sl_yr")
+                    with c_ys2:
+                        yf_end_sl_months = st.slider('Bulan (0 - 11):', 0, 11, 0, key="yf_end_sl_mo")
+                    with c_ys3:
+                        yf_end_sl_weeks = st.slider('Minggu (0 - 4):', 0, 4, 0, key="yf_end_sl_wk")
+                    with c_ys4:
+                        yf_end_sl_days = st.slider('Hari (0 - 30):', 0, 30, 0, key="yf_end_sl_dy")
+                    end_date_obj = latest_avail_dt - timedelta(days=(yf_end_sl_years * 365 + yf_end_sl_months * 30 + yf_end_sl_weeks * 7 + yf_end_sl_days))
+                    st.info(f"Tanggal Selesai: **`{end_date_obj}`**.")
+
                 else:
                     end_date_obj = st.date_input(
-                        "📅 Tanggal Selesai Pelatihan (Kalender):",
+                        "Tanggal Selesai Pelatihan (Kalender):",
                         value=latest_avail_dt,
                         min_value=date(1990, 1, 1),
                         max_value=latest_avail_dt,
                         key="yf_cal_end_date"
                     )
+                    st.info(f"Tanggal Selesai via Kalender: **`{end_date_obj}`**.")
 
             # 2. Pilihan Metode Rentang Data Pelatihan yFinance
             method_options = [
