@@ -4816,7 +4816,7 @@ def _probe_ok(category, symbol, source, timeframe, market_type, api_key):
     except Exception:
         return False, pd.DataFrame()
 
-def render_unified_asset_page(category, header_html, desc_html, tips_md, presets, default_symbol, key_prefix, need_cmc_key=False):
+def render_unified_asset_page(category, header_html, desc_html, tips_md, presets, default_symbol, key_prefix, need_cmc_key=False, logo_map=None):
     if f"{key_prefix}_sym" not in st.session_state:
         st.session_state[f"{key_prefix}_sym"] = default_symbol
     if f"{key_prefix}_src" not in st.session_state:
@@ -4907,6 +4907,15 @@ def render_unified_asset_page(category, header_html, desc_html, tips_md, presets
     if not symbol:
         st.warning("Silakan masukkan simbol terlebih dahulu")
         return
+    if logo_map:
+        try:
+            import os as _os
+            _lm = {str(_k).upper(): _v for _k, _v in logo_map.items()}
+            _lf = _lm.get(str(symbol).upper())
+            if _lf and _os.path.exists(_lf):
+                st.image(Image.open(_lf), width=320)
+        except Exception:
+            pass
     st.cache_data.clear()
     main(symbol, data_source=(source if source != "yfinance-crypto" else "yfinance"), api_key=_api_key_val, timeframe=timeframe, market_type=market_type, category=category)
 
@@ -5090,7 +5099,8 @@ if menu_type == "Prediksi Saham":
             "<h1 style='text-align: left; color: #8D6E00;'>Input Komoditas (termasuk yFinance)</h1>",
             "<p style='text-align: justify; color: black;'>Pilih komoditas likuid (contoh: GC=F emas, CL=F minyak WTI, SI=F perak). Sumber: yFinance &gt; Stooq. Timeframe per-Hari (WIB).</p>",
             "1. **Format futures yFinance**: `GC=F` (emas), `SI=F` (perak), `CL=F` (WTI), `BZ=F` (Brent), `NG=F` (gas).",
-            CATEGORY_PRESETS["komoditas"], "GC=F", "cmd", need_cmc_key=False)
+            CATEGORY_PRESETS["komoditas"], "GC=F", "cmd", need_cmc_key=False,
+            logo_map={"GC=F": "./LOGO/GC.png", "SI=F": "./LOGO/SI.png", "CL=F": "./LOGO/CL.png", "BZ=F": "./LOGO/BZ.png", "NG=F": "./LOGO/NG.png", "HG=F": "./LOGO/HG.png", "PL=F": "./LOGO/PL.png", "PA=F": "./LOGO/PA.png"})
 
     elif selected == "Input Crypto (Multi-Exchange)":
         render_unified_asset_page(
