@@ -401,6 +401,712 @@ def fetch_kraken_data(symbol, api_key="", interval="1m", count=1000):
                 df[col] = df.iloc[:, 0]
     return df
 
+
+# =====================================================================
+# UNIVERSAL MARKET INFRA — WIB (UTC+7) + MULTI-SOURCE PUBLIC API
+# Kategori: forex | etf | saham | komoditas | crypto
+# Sumber diurut dari likuiditas/volume tertinggi (crypto: Binance dulu).
+# Semua timestamp dinormalisasi ke WIB (UTC+7, naive) agar sumbu-X
+# konsisten: per-detik/menit/jam/hari. Data harian midnight tidak digeser
+# harinya, hanya dilabeli WIB; data intraday UTC digeser +7 jam.
+# =====================================================================
+WIB_OFFSET = pd.Timedelta(hours=7)
+
+TIMEFRAME_SECONDS = {
+    "1s": 1, "15s": 15, "30s": 30,
+    "1m": 60, "3m": 180, "5m": 300, "10m": 600, "15m": 900,
+    "30m": 1800, "45m": 2700,
+    "1H": 3600, "2H": 7200, "3H": 10800, "4H": 14400, "6H": 21600,
+    "8H": 28800, "12H": 43200,
+    "1D": 86400, "2D": 172800, "3D": 259200,
+    "1W": 604800, "1M": 2592000,
+}
+TIMEFRAME_LABEL_ID = {
+    "1s": "per-Detik (1s)", "15s": "per-Detik (15s)", "30s": "per-Detik (30s)",
+    "1m": "per-Menit (1m)", "3m": "per-Menit (3m)", "5m": "per-Menit (5m)",
+    "10m": "per-Menit (10m)", "15m": "per-Menit (15m)", "30m": "per-Menit (30m)",
+    "45m": "per-Menit (45m)",
+    "1H": "per-Jam (1H)", "2H": "per-Jam (2H)", "3H": "per-Jam (3H)",
+    "4H": "per-Jam (4H)", "6H": "per-Jam (6H)", "8H": "per-Jam (8H)",
+    "12H": "per-Jam (12H)",
+    "1D": "per-Hari (1D)", "2D": "per-Hari (2D)", "3D": "per-Hari (3D)",
+    "1W": "per-Minggu (1W)", "1M": "per-Bulan (1M)",
+}
+
+CRYPTO_SOURCES_ORDERED = ["binance", "bybit", "okx", "coinbase", "bitget", "gate", "kucoin", "mexc", "cryptocom", "kraken", "bitfinex", "upbit", "bithumb", "bitmart", "coinmarketcap", "yfinance"]
+FOREX_SOURCES_ORDERED = ["yfinance", "stooq", "frankfurter", "opener"]
+ETF_SOURCES_ORDERED = ["yfinance", "stooq"]
+STOCK_SOURCES_ORDERED = ["yfinance", "stooq"]
+COMMODITY_SOURCES_ORDERED = ["yfinance", "stooq"]
+
+SOURCE_DISPLAY = {
+    "binance": "Binance", "bybit": "Bybit", "okx": "OKX", "coinbase": "Coinbase",
+    "bitget": "Bitget", "gate": "Gate.io", "kucoin": "KuCoin", "mexc": "MEXC",
+    "cryptocom": "Crypto.com", "kraken": "Kraken", "bitfinex": "Bitfinex",
+    "upbit": "Upbit", "bithumb": "Bithumb", "bitmart": "BitMart",
+    "coinmarketcap": "CoinMarketCap", "yfinance": "yFinance",
+    "stooq": "Stooq", "frankfurter": "Frankfurter (ECB)", "opener": "Open ER-API",
+}
+SOURCE_TIMEFRAMES = {
+    "binance": ["1s", "1m", "3m", "5m", "15m", "30m", "1H", "2H", "4H", "6H", "8H", "12H", "1D", "1W", "1M"],
+    "bybit": ["1m", "3m", "5m", "15m", "30m", "1H", "2H", "4H", "6H", "12H", "1D", "1W", "1M"],
+    "okx": ["1m", "3m", "5m", "15m", "30m", "1H", "2H", "4H", "6H", "12H", "1D", "1W", "1M"],
+    "coinbase": ["1m", "5m", "15m", "1H", "6H", "1D"],
+    "bitget": ["1m", "5m", "15m", "30m", "1H", "4H", "12H", "1D", "1W", "1M"],
+    "gate": ["1m", "5m", "15m", "30m", "1H", "4H", "8H", "1D", "1W"],
+    "kucoin": ["1m", "3m", "5m", "15m", "30m", "1H", "2H", "4H", "12H", "1D", "1W", "1M"],
+    "mexc": ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1M"],
+    "cryptocom": ["1m", "5m", "15m", "30m", "1H", "4H", "1D"],
+    "kraken": ["1m", "5m", "15m", "30m", "1H", "4H", "12H", "1D", "1W"],
+    "bitfinex": ["1m", "5m", "15m", "30m", "1H", "3H", "6H", "12H", "1D", "1W", "1M"],
+    "upbit": ["1m", "3m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"],
+    "bithumb": ["1m", "3m", "5m", "15m", "30m", "1H", "6H", "12H", "1D"],
+    "bitmart": ["1m", "3m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"],
+    "coinmarketcap": ["1m", "5m", "15m", "30m", "1H", "2H", "4H", "6H", "12H", "1D"],
+    "yfinance": ["1m", "5m", "15m", "30m", "1H", "1D", "1W", "1M"],
+    "stooq": ["1D"],
+    "frankfurter": ["1D"],
+    "opener": ["1D"],
+}
+SOURCE_MARKETS = {
+    "binance": ["spot", "futures (USD-M)", "futures (COIN-M)"],
+    "bybit": ["spot", "perpetual (linear)", "perpetual (inverse)", "option"],
+    "okx": ["spot", "swap (perpetual)", "futures", "option"],
+    "coinbase": ["spot"],
+    "bitget": ["spot", "futures (USDT-M)", "futures (COIN-M)"],
+    "gate": ["spot", "futures (perpetual)"],
+    "kucoin": ["spot", "futures"],
+    "mexc": ["spot", "futures"],
+    "cryptocom": ["spot"],
+    "kraken": ["spot", "futures"],
+    "bitfinex": ["spot", "funding"],
+    "upbit": ["spot"],
+    "bithumb": ["spot"],
+    "bitmart": ["spot", "futures"],
+    "coinmarketcap": ["spot"],
+    "yfinance": ["spot"],
+    "stooq": ["spot"],
+    "frankfurter": ["spot"],
+    "opener": ["spot"],
+}
+
+CATEGORY_PRESETS = {
+    "forex": ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDIDR=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "EURIDR=X"],
+    "etf": ["SPY", "QQQ", "DIA", "IWM", "EEM", "VTI", "ARKK", "SMH"],
+    "saham": ["BBCA.JK", "BMRI.JK", "BBRI.JK", "BBNI.JK", "BRIS.JK", "TLKM.JK", "AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "META"],
+    "komoditas": ["GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "PL=F", "PA=F"],
+    "crypto": ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "DOT"],
+}
+
+def clean_crypto_base(sym):
+    if not sym:
+        return "BTC"
+    s = str(sym).strip().upper().replace(" ", "").replace("_", "").replace("-", "").replace("/", "")
+    for suf in ["USDT", "USD", "USDC", "BUSD", "IDR", "KRW"]:
+        if s.endswith(suf) and len(s) > len(suf):
+            s = s[: -len(suf)]
+            break
+    if s in ("XBT",):
+        s = "BTC"
+    return s or "BTC"
+
+def tf_seconds(tf):
+    return TIMEFRAME_SECONDS.get(str(tf), 60)
+
+def is_daily_or_above(tf):
+    return tf_seconds(tf) >= 86400
+
+def to_wib_index(idx, assume_utc_shift=True):
+    """Konversi index ke WIB naive. Daily midnight tidak digeser harinya."""
+    try:
+        idx = pd.DatetimeIndex(pd.to_datetime(idx))
+        if idx.tz is not None:
+            try:
+                idx = idx.tz_convert("Asia/Jakarta").tz_localize(None)
+            except Exception:
+                idx = idx.tz_localize(None)
+            return idx
+        if not assume_utc_shift:
+            return idx
+        # Deteksi harian (semua midnight) -> jangan geser
+        try:
+            all_mid = bool(((idx.hour == 0) & (idx.minute == 0) & (idx.second == 0)).all())
+        except Exception:
+            all_mid = False
+        if all_mid:
+            return idx
+        return idx + WIB_OFFSET
+    except Exception:
+        return idx
+
+def to_wib_df(df, assume_utc_shift=True):
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    try:
+        df.index = to_wib_index(df.index, assume_utc_shift=assume_utc_shift)
+        df.index.name = "Date"
+    except Exception:
+        pass
+    return df.sort_index()
+
+def fmt_wib(ts):
+    try:
+        t = pd.to_datetime(ts)
+        if t.hour == 0 and t.minute == 0 and t.second == 0:
+            return t.strftime("%Y-%m-%d") + " WIB"
+        return t.strftime("%Y-%m-%d %H:%M WIB")
+    except Exception:
+        return str(ts)
+
+def wib_axis_title(tf):
+    lbl = TIMEFRAME_LABEL_ID.get(str(tf), str(tf))
+    return f"Waktu (WIB \u2022 {lbl})"
+
+def wib_tickformat(tf):
+    s = tf_seconds(tf)
+    if s < 60:
+        return "%H:%M:%S"
+    if s < 86400:
+        return "%H:%M\n%d %b"
+    if s < 604800:
+        return "%d %b\n%Y"
+    return "%d %b %Y"
+
+def apply_wib_xaxis(fig, tf, rows_cols=None):
+    """Terapkan judul + format tick WIB adaptif ke semua xaxis Plotly."""
+    try:
+        fmt = wib_tickformat(tf)
+        title = wib_axis_title(tf)
+        if rows_cols:
+            for r, c in rows_cols:
+                fig.update_xaxes(title_text=title, tickformat=fmt, tickangle=-20, row=r, col=c)
+        else:
+            fig.update_xaxes(title_text=title, tickformat=fmt, tickangle=-20)
+    except Exception:
+        pass
+    return fig
+
+def infer_granularity(df):
+    """Deteksi granularitas aktual dari median selisih timestamp."""
+    try:
+        if df is None or df.empty or len(df) < 2:
+            return {"seconds": None, "label": "tidak diketahui", "kelas": "unknown"}
+        idx = pd.DatetimeIndex(pd.to_datetime(df.index)).sort_values()
+        diffs = idx.to_series().diff().dropna().dt.total_seconds().values
+        diffs = diffs[diffs > 0]
+        if len(diffs) == 0:
+            return {"seconds": None, "label": "tidak diketahui", "kelas": "unknown"}
+        med = float(np.median(diffs))
+        if med < 90:
+            return {"seconds": med, "label": f"per-Detik/Menit (~{med:.0f}s)", "kelas": "second-minute"}
+        if med < 5400:
+            return {"seconds": med, "label": f"per-Menit (~{med/60:.1f} mnt)", "kelas": "minute"}
+        if med < 129600:
+            return {"seconds": med, "label": f"per-Jam (~{med/3600:.1f} jam)", "kelas": "hour"}
+        if med < 950400:
+            return {"seconds": med, "label": f"per-Hari (~{med/86400:.1f} hari)", "kelas": "day"}
+        return {"seconds": med, "label": f"per-Minggu/Bulan (~{med/86400:.0f} hari)", "kelas": "week-month"}
+    except Exception:
+        return {"seconds": None, "label": "tidak diketahui", "kelas": "unknown"}
+
+def build_forecast_options_for_tf(timeframe, n_test):
+    """Opsi forecasting adaptif thd timeframe. Steps = horizon/base. Filter <= n_test. Default 3-4 tengah."""
+    try:
+        base = max(1, tf_seconds(timeframe))
+    except Exception:
+        base = 60
+    cands = []
+    if base < 3600:
+        # basis menitan/detik -> horizon menit -> hari
+        for lbl, hsec in [("15 Menit", 900), ("30 Menit", 1800), ("45 Menit", 2700), ("1 Jam", 3600), ("2 Jam", 7200), ("4 Jam", 14400), ("6 Jam", 21600), ("12 Jam", 43200), ("1 Hari", 86400), ("2 Hari", 172800), ("3 Hari", 259200), ("1 Minggu", 604800)]:
+            steps = max(1, int(round(hsec / base)))
+            cands.append((lbl, steps))
+    elif base < 86400:
+        for lbl, hsec in [("1 Jam", 3600), ("4 Jam", 14400), ("12 Jam", 43200), ("1 Hari", 86400), ("2 Hari", 172800), ("3 Hari", 259200), ("1 Minggu", 604800), ("2 Minggu", 1209600), ("1 Bulan", 2592000)]:
+            steps = max(1, int(round(hsec / base)))
+            cands.append((lbl, steps))
+    else:
+        mult = max(1, int(round(base / 86400)))
+        for lbl, d in [("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6), ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60), ("3 Bulan", 90), ("4 Bulan", 120), ("6 Bulan", 180), ("1 Tahun", 365), ("2 Tahun", 730)]:
+            steps = max(1, int(round(d / mult)))
+            cands.append((lbl, steps))
+    n = max(0, int(n_test or 0))
+    valid = [(l, s) for l, s in cands if s <= max(1, n) and s >= 1]
+    if not valid and cands:
+        valid = [cands[0]]
+    # default: 3-4 opsi tengah yang valid
+    if len(valid) <= 4:
+        defaults = [l for l, _ in valid[: min(3, len(valid))]]
+    else:
+        mid = len(valid) // 2
+        lo = max(0, mid - 1)
+        defaults = [l for l, _ in valid[lo: lo + 4]]
+        if len(defaults) < 3:
+            defaults = [l for l, _ in valid[-3:]]
+    return {l: s for l, s in valid}, defaults
+
+def build_mini_periods_for_tf(timeframe):
+    """Periode mini-tren adaptif. Label eksplisit, anchor = Data Terakhir (WIB). Bedakan YTD vs 1Y."""
+    base = tf_seconds(timeframe)
+    if base < 3600:
+        return [
+            ("15m", pd.Timedelta(minutes=15)), ("1H", pd.Timedelta(hours=1)),
+            ("4H", pd.Timedelta(hours=4)), ("12H", pd.Timedelta(hours=12)),
+            ("1D", pd.Timedelta(days=1)), ("3D", pd.Timedelta(days=3)),
+        ]
+    if base < 86400:
+        return [
+            ("1H", pd.Timedelta(hours=1)), ("4H", pd.Timedelta(hours=4)),
+            ("12H", pd.Timedelta(hours=12)), ("1D", pd.Timedelta(days=1)),
+            ("1W", pd.Timedelta(days=7)), ("1M", pd.Timedelta(days=30)),
+        ]
+    return [
+        ("1D", pd.Timedelta(days=1)), ("1W", pd.Timedelta(days=7)),
+        ("1M", pd.Timedelta(days=30)), ("90D", pd.Timedelta(days=90)),
+        ("1Y (365D)", pd.Timedelta(days=365)), ("YTD (1 Jan\u2013Terakhir)", "YTD"),
+    ]
+
+def ytd_slice(df):
+    try:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        last = pd.to_datetime(df.index[-1])
+        start = pd.Timestamp(year=int(last.year), month=1, day=1)
+        return df[df.index >= start].copy()
+    except Exception:
+        return pd.DataFrame()
+
+# ---------------- Public crypto fetchers (no key) ----------------
+def _req_json(url, params=None, timeout=10):
+    import requests
+    r = requests.get(url, params=params or {}, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+    if r.status_code == 200:
+        return r.json()
+    return None
+
+@st.cache_data(ttl=300)
+def fetch_binance_ohlc(symbol, timeframe="1m", market_type="spot", limit=1000):
+    try:
+        base = clean_crypto_base(symbol)
+        tf = timeframe if timeframe in ["1s", "1m", "3m", "5m", "15m", "30m", "1H", "2H", "4H", "6H", "8H", "12H", "1D", "1W", "1M"] else "1m"
+        iv = {"1s": "1s", "1H": "1h", "2H": "2h", "4H": "4h", "6H": "6h", "8H": "8h", "12H": "12h", "1D": "1d", "1W": "1w", "1M": "1M"}.get(tf, tf)
+        mt = str(market_type).lower()
+        host = "https://fapi.binance.com" if "usd-m" in mt or mt.startswith("futures") else ("https://dapi.binance.com" if "coin-m" in mt else "https://api.binance.com")
+        path = "/futures/data/klines" if "dapi" in host else ("/fapi/v1/klines" if "fapi" in host else "/api/v3/klines")
+        # dapi uses different path; fallback to spot host on failure
+        try:
+            data = _req_json(host + path, {"symbol": base + "USDT", "interval": iv, "limit": min(1000, limit)})
+        except Exception:
+            data = None
+        if not data:
+            data = _req_json("https://api.binance.com/api/v3/klines", {"symbol": base + "USDT", "interval": iv, "limit": min(1000, limit)})
+        if not data:
+            # coba quote BTC utk stable lain
+            data = _req_json("https://api.binance.com/api/v3/klines", {"symbol": base + "USDC", "interval": iv, "limit": min(1000, limit)})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in data]
+        df = pd.DataFrame(rows).set_index("Date").sort_index()
+        return to_wib_df(df, assume_utc_shift=True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_bybit_ohlc(symbol, timeframe="1m", market_type="spot", limit=1000):
+    try:
+        base = clean_crypto_base(symbol)
+        ivm = {"1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30", "1H": "60", "2H": "120", "4H": "240", "6H": "360", "12H": "720", "1D": "D", "1W": "W", "1M": "M"}
+        iv = ivm.get(timeframe, "1")
+        mt = str(market_type).lower()
+        cat = "spot" if "spot" in mt else ("option" if "option" in mt else ("inverse" if "inverse" in mt else "linear"))
+        js = _req_json("https://api.bybit.com/v5/market/kline", {"category": cat, "symbol": base + "USDT", "interval": iv, "limit": min(1000, limit)})
+        lst = (js or {}).get("result", {}).get("list", [])
+        if not lst:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in sorted(lst, key=lambda x: int(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_okx_ohlc(symbol, timeframe="1m", market_type="spot", limit=100):
+    try:
+        base = clean_crypto_base(symbol)
+        barm = {"1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1H", "2H": "2H", "4H": "4H", "6H": "6H", "12H": "12H", "1D": "1D", "1W": "1W", "1M": "1M"}
+        bar = barm.get(timeframe, "1m")
+        js = _req_json("https://www.okx.com/api/v5/market/candles", {"instId": base + "-USDT", "bar": bar, "limit": min(100, limit)})
+        data = (js or {}).get("data", [])
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in sorted(data, key=lambda x: int(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_coinbase_ohlc(symbol, timeframe="1m", market_type="spot", limit=300):
+    try:
+        base = clean_crypto_base(symbol)
+        gm = {"1m": 60, "5m": 300, "15m": 900, "1H": 3600, "6H": 21600, "1D": 86400}
+        g = gm.get(timeframe, 60)
+        data = _req_json(f"https://api.exchange.coinbase.com/products/{base}-USD/candles", {"granularity": g})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="s"), "Open": safe_float(k[3]), "High": safe_float(k[2]), "Low": safe_float(k[1]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in sorted(data, key=lambda x: int(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_bitget_ohlc(symbol, timeframe="1m", market_type="spot", limit=200):
+    try:
+        base = clean_crypto_base(symbol)
+        gm = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1h", "4H": "4h", "12H": "12h", "1D": "1d", "1W": "1w", "1M": "1M"}
+        g = gm.get(timeframe, "1m")
+        js = _req_json("https://api.bitget.com/api/v2/spot/market/candles", {"symbol": base + "USDT", "granularity": g, "limit": min(200, limit)})
+        data = (js or {}).get("data", [])
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in sorted(data, key=lambda x: int(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_gate_ohlc(symbol, timeframe="1m", market_type="spot", limit=500):
+    try:
+        base = clean_crypto_base(symbol)
+        gm = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1h", "4H": "4h", "8H": "8h", "1D": "1d", "1W": "7d"}
+        iv = gm.get(timeframe, "1m")
+        data = _req_json("https://api.gateio.ws/api/v4/spot/candlesticks", {"currency_pair": base + "_USDT", "interval": iv, "limit": min(500, limit)})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(float(k[0])), unit="s"), "Open": safe_float(k[2]), "High": safe_float(k[3]), "Low": safe_float(k[4]), "Close": safe_float(k[5]), "Volume": safe_float(k[1])} for k in data]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_kucoin_ohlc(symbol, timeframe="1m", market_type="spot", limit=500):
+    try:
+        base = clean_crypto_base(symbol)
+        tm = {"1m": "1min", "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min", "1H": "1hour", "2H": "2hour", "4H": "4hour", "12H": "12hour", "1D": "1day", "1W": "1week", "1M": "1month"}
+        t = tm.get(timeframe, "1min")
+        js = _req_json("https://api.kucoin.com/api/v1/market/candles", {"symbol": base + "-USDT", "type": t})
+        data = (js or {}).get("data", [])
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(float(k[0])), unit="s"), "Open": safe_float(k[1]), "High": safe_float(k[3]), "Low": safe_float(k[4]), "Close": safe_float(k[2]), "Volume": safe_float(k[5])} for k in sorted(data, key=lambda x: float(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_mexc_ohlc(symbol, timeframe="1m", market_type="spot", limit=1000):
+    try:
+        base = clean_crypto_base(symbol)
+        ivm = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "60m", "4H": "4h", "1D": "1d", "1M": "1M"}
+        iv = ivm.get(timeframe, "1m")
+        data = _req_json("https://api.mexc.com/api/v3/klines", {"symbol": base + "USDT", "interval": iv, "limit": min(1000, limit)})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in data]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_cryptocom_ohlc(symbol, timeframe="1m", market_type="spot", limit=300):
+    try:
+        base = clean_crypto_base(symbol)
+        tfm = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1H", "4H": "4H", "1D": "1D"}
+        tf = tfm.get(timeframe, "1m")
+        js = _req_json("https://api.crypto.com/exchange/v1/public/get-candlestick", {"instrument_name": base + "_USDT", "timeframe": tf})
+        data = ((js or {}).get("result") or {}).get("data", [])
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k["t"]), unit="ms"), "Open": safe_float(k["o"]), "High": safe_float(k["h"]), "Low": safe_float(k["l"]), "Close": safe_float(k["c"]), "Volume": safe_float(k["v"])} for k in sorted(data, key=lambda x: int(x["t"]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_bitfinex_ohlc(symbol, timeframe="1m", market_type="spot", limit=1000):
+    try:
+        base = clean_crypto_base(symbol)
+        tfm = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1h", "3H": "3h", "6H": "6h", "12H": "12h", "1D": "1D", "1W": "7D", "1M": "1M"}
+        tf = tfm.get(timeframe, "1m")
+        data = _req_json(f"https://api-pub.bitfinex.com/v2/candles/trade:{tf}:t{base}USD/hist", {"limit": min(1000, limit), "sort": 1})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[3]), "Low": safe_float(k[4]), "Close": safe_float(k[2]), "Volume": safe_float(k[5])} for k in data]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_upbit_ohlc(symbol, timeframe="1m", market_type="spot", limit=200):
+    try:
+        base = clean_crypto_base(symbol)
+        if timeframe in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
+            unit = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1H": 60, "4H": 240}[timeframe]
+            data = _req_json(f"https://api.upbit.com/v1/candles/minutes/{unit}", {"market": f"KRW-{base}", "count": min(200, limit)})
+            if not data:
+                data = _req_json(f"https://api.upbit.com/v1/candles/minutes/{unit}", {"market": f"USDT-{base}", "count": min(200, limit)})
+        elif timeframe in ("1D",):
+            data = _req_json("https://api.upbit.com/v1/candles/days", {"market": f"KRW-{base}", "count": min(200, limit)})
+        elif timeframe in ("1W",):
+            data = _req_json("https://api.upbit.com/v1/candles/weeks", {"market": f"KRW-{base}", "count": min(200, limit)})
+        else:
+            data = _req_json("https://api.upbit.com/v1/candles/months", {"market": f"KRW-{base}", "count": min(200, limit)})
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(k["candle_date_time_kst"]), "Open": safe_float(k["opening_price"]), "High": safe_float(k["high_price"]), "Low": safe_float(k["low_price"]), "Close": safe_float(k["trade_price"]), "Volume": safe_float(k["candle_acc_trade_volume"])} for k in sorted(data, key=lambda x: x["candle_date_time_kst"])]
+        df = pd.DataFrame(rows).set_index("Date").sort_index()
+        # Upbit KST = UTC+9 -> WIB = KST-2 jam
+        try:
+            df.index = pd.DatetimeIndex(pd.to_datetime(df.index)) - pd.Timedelta(hours=2)
+        except Exception:
+            pass
+        df.index.name = "Date"
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_bithumb_ohlc(symbol, timeframe="1m", market_type="spot", limit=500):
+    try:
+        base = clean_crypto_base(symbol)
+        tfm = {"1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m", "1H": "1h", "6H": "6h", "12H": "12h", "1D": "24h"}
+        iv = tfm.get(timeframe, "1m")
+        js = _req_json(f"https://api.bithumb.com/public/candlestick/{base}_KRW/{iv}")
+        data = (js or {}).get("data", [])
+        if not data:
+            return pd.DataFrame()
+        rows = []
+        for k in data[-limit:]:
+            try:
+                rows.append({"Date": pd.to_datetime(int(k[0]), unit="ms"), "Open": safe_float(k[1]), "High": safe_float(k[3]), "Low": safe_float(k[4]), "Close": safe_float(k[2]), "Volume": safe_float(k[5])})
+            except Exception:
+                continue
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows).set_index("Date").sort_index()
+        # Bithumb KST -> WIB (-2 jam)
+        try:
+            df.index = pd.DatetimeIndex(pd.to_datetime(df.index)) - pd.Timedelta(hours=2)
+        except Exception:
+            pass
+        df.index.name = "Date"
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_bitmart_ohlc(symbol, timeframe="1m", market_type="spot", limit=200):
+    try:
+        base = clean_crypto_base(symbol)
+        stepm = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1H": 60, "4H": 240, "1D": 1440, "1W": 10080, "1M": 43200}
+        step = stepm.get(timeframe, 1)
+        js = _req_json("https://api-cloud.bitmart.com/spot/v3/symbols/kline", {"symbol": base + "_USDT", "step": step, "limit": min(200, limit)})
+        data = ((js or {}).get("data") or {}).get("klines", [])
+        if not data:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(int(k[0]), unit="s"), "Open": safe_float(k[1]), "High": safe_float(k[2]), "Low": safe_float(k[3]), "Close": safe_float(k[4]), "Volume": safe_float(k[5])} for k in sorted(data, key=lambda x: int(x[0]))]
+        return to_wib_df(pd.DataFrame(rows).set_index("Date").sort_index(), True)
+    except Exception:
+        return pd.DataFrame()
+
+# ---------------- Non-crypto public (yfinance / stooq / frankfurter / opener) ----------------
+@st.cache_data(ttl=600)
+def fetch_yf_generic(ticker, timeframe="1D"):
+    try:
+        t = (ticker or "").strip()
+        tf = str(timeframe)
+        if tf in ("1s", "15s", "30s"):
+            tf = "1m"
+        yf_iv = tf if tf in ["1m", "5m", "15m", "30m", "1H", "1D", "1W", "1M"] else "1D"
+        if yf_iv == "1H":
+            yf_iv = "60m"
+        per = {"1m": "7d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d"}.get(yf_iv, "max")
+        df = yf.download(t, period=per, interval=yf_iv, auto_adjust=False, progress=False)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            return pd.DataFrame()
+        df = ensure_datetime_index(df)
+        # yfinance intraday umumnya UTC -> WIB; harian biarkan tanggal
+        intraday = yf_iv not in ("1D", "1W", "1M")
+        df = to_wib_df(df, assume_utc_shift=intraday)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col not in df.columns:
+                df[col] = df.iloc[:, 0]
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def fetch_stooq_daily(ticker):
+    try:
+        import requests
+        t = (ticker or "").strip().lower()
+        # mapping umum: BBCA.JK -> bbca.jk ; AAPL -> aapl.us ; GC=F -> xauusd?
+        futmap = {"gc=f": "xauusd", "si=f": "xagusd", "cl=f": "wtico.usd", "bz=f": "brent.usd", "ng=f": "natgas.usd", "hg=f": "copper.usd", "pl=f": "xptusd", "pa=f": "xpdusd", "c=f": "corn.usd"}
+        if t in futmap:
+            t = futmap[t]
+        elif t.endswith(".jk"):
+            pass
+        elif "=" in t:
+            t = t.replace("=x", "").replace("=", "").lower()
+            if len(t) == 6:
+                t = t[:3] + t[3:] + ".fx" if False else t
+        elif "." not in t and "-" not in t:
+            # saham US default .us
+            if len(t) <= 5:
+                t = t + ".us"
+        t = t.replace("-usd", "")
+        url = "https://stooq.com/q/d/l/"
+        r = requests.get(url, params={"s": t, "i": "d"}, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200 or "Date" not in r.text:
+            return pd.DataFrame()
+        from io import StringIO
+        df = pd.read_csv(StringIO(r.text))
+        if df.empty or "Close" not in df.columns:
+            return pd.DataFrame()
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.set_index("Date").sort_index()
+        df.index.name = "Date"
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def fetch_frankfurter_ohlc(symbol, timeframe="1D"):
+    try:
+        s = (symbol or "").upper().replace("=X", "").replace(" ", "")
+        if len(s) < 6:
+            return pd.DataFrame()
+        base, quote = s[:3], s[3:6]
+        js = _req_json(f"https://api.frankfurter.app/2020-01-01..", {"from": base, "to": quote})
+        if not js or "rates" not in js:
+            return pd.DataFrame()
+        rows = [{"Date": pd.to_datetime(k), "Close": safe_float(v.get(quote, 0))} for k, v in sorted(js["rates"].items())]
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return pd.DataFrame()
+        df["Open"] = df["Close"]
+        df["High"] = df["Close"]
+        df["Low"] = df["Close"]
+        df["Volume"] = 0.0
+        return df.set_index("Date").sort_index()
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def fetch_opener_ohlc(symbol, timeframe="1D"):
+    try:
+        s = (symbol or "").upper().replace("=X", "").replace(" ", "")
+        base = s[:3] if len(s) >= 3 else "USD"
+        js = _req_json(f"https://open.er-api.com/v6/latest/{base}")
+        rates = (js or {}).get("rates", {})
+        if not rates:
+            return pd.DataFrame()
+        # hanya snapshot terakhir -> kembalikan 2 baris semu agar pipeline jalan, tandai volume 0
+        now = pd.Timestamp.now().normalize()
+        quote = s[3:6] if len(s) >= 6 else "IDR"
+        px = safe_float(rates.get(quote, 0))
+        if px <= 0:
+            return pd.DataFrame()
+        df = pd.DataFrame([{"Date": now - pd.Timedelta(days=1), "Open": px, "High": px, "Low": px, "Close": px, "Volume": 0.0}, {"Date": now, "Open": px, "High": px, "Low": px, "Close": px, "Volume": 0.0}]).set_index("Date").sort_index()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+CRYPTO_FETCHERS = {
+    "binance": fetch_binance_ohlc, "bybit": fetch_bybit_ohlc, "okx": fetch_okx_ohlc,
+    "coinbase": fetch_coinbase_ohlc, "bitget": fetch_bitget_ohlc, "gate": fetch_gate_ohlc,
+    "kucoin": fetch_kucoin_ohlc, "mexc": fetch_mexc_ohlc, "cryptocom": fetch_cryptocom_ohlc,
+    "kraken": None, "bitfinex": fetch_bitfinex_ohlc, "upbit": fetch_upbit_ohlc,
+    "bithumb": fetch_bithumb_ohlc, "bitmart": fetch_bitmart_ohlc,
+    "coinmarketcap": None, "yfinance": None,
+}
+
+def fetch_unified(category, symbol, source, timeframe="1m", market_type="spot", api_key="", limit=1000):
+    """Dispatcher universal. Return (df_wib, actual_source, грана_info, needs_key)."""
+    cat = (category or "crypto").lower()
+    src = (source or "").lower()
+    tf = str(timeframe)
+    mt = str(market_type or "spot")
+    df = pd.DataFrame()
+    actual = src
+    needs_key = False
+    try:
+        if cat == "crypto":
+            if src == "kraken":
+                df = fetch_kraken_data(symbol, api_key=api_key, interval=tf, count=limit)
+                df = to_wib_df(ensure_datetime_index(df), assume_utc_shift=(not is_daily_or_above(tf)))
+            elif src == "coinmarketcap":
+                df = fetch_coinmarketcap_data(symbol, api_key=api_key, interval=tf, count=limit)
+                df = to_wib_df(ensure_datetime_index(df), assume_utc_shift=(not is_daily_or_above(tf)))
+                if df.empty or len(df) < 5:
+                    needs_key = True
+            elif src == "yfinance":
+                base = clean_crypto_base(symbol)
+                df = fetch_yf_generic(base + "-USD", tf)
+            elif src in CRYPTO_FETCHERS and CRYPTO_FETCHERS[src] is not None:
+                df = CRYPTO_FETCHERS[src](symbol, timeframe=tf, market_type=mt, limit=limit)
+            else:
+                df = fetch_binance_ohlc(symbol, timeframe=tf, market_type=mt, limit=limit)
+                actual = "binance"
+        elif cat == "forex":
+            if src == "stooq":
+                df = fetch_stooq_daily(symbol)
+            elif src == "frankfurter":
+                df = fetch_frankfurter_ohlc(symbol, tf)
+            elif src == "opener":
+                df = fetch_opener_ohlc(symbol, tf)
+            else:
+                df = fetch_yf_generic(symbol, "1D")
+                actual = "yfinance"
+        else:  # etf / saham / komoditas
+            if src == "stooq":
+                df = fetch_stooq_daily(symbol)
+            else:
+                df = fetch_yf_generic(symbol, "1D")
+                actual = "yfinance"
+    except Exception:
+        df = pd.DataFrame()
+    if df is None:
+        df = pd.DataFrame()
+    if not df.empty:
+        df = ensure_datetime_index(df)
+        # pastikan WIB + kolom lengkap
+        try:
+            assume_utc = (cat == "crypto" and (not is_daily_or_above(tf)))
+            # jika index masih naive UTC dari cache lama, pastikan digeser sekali saja:
+            df = to_wib_df(df, assume_utc_shift=False) if not assume_utc else df
+        except Exception:
+            pass
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col not in df.columns:
+                try:
+                    df[col] = df.iloc[:, 0]
+                except Exception:
+                    df[col] = 0.0
+    return df, actual, infer_granularity(df), needs_key
+
+def try_crypto_fallback_chain(symbol, timeframe="1m", market_type="spot", api_key="", exclude=()):
+    """Coba semua sumber crypto berurutan (likuid dulu). Return (df, actual_source)."""
+    for src in CRYPTO_SOURCES_ORDERED:
+        if src in (exclude or ()):
+            continue
+        try:
+            df, actual, _, _ = fetch_unified("crypto", symbol, src, timeframe, market_type, api_key)
+            if df is not None and not df.empty and len(df) >= 10:
+                return df, actual
+        except Exception:
+            continue
+    return pd.DataFrame(), ""
+
 @st.cache_data(ttl=3600)
 def get_market_cap(ticker, last_close=0.0, last_volume=0.0):
     try:
@@ -1016,7 +1722,7 @@ def render_sparkline_chart(series, is_positive=True, chart_type='line', fill=Tru
     plt.tight_layout(pad=0.1)
     return fig
 
-def plot_interactive_history(df, title, y_label, line_color, curr_prefix=""):
+def plot_interactive_history(df, title, y_label, line_color, curr_prefix="", timeframe="1D"):
     fig = go.Figure()
     if df is None or df.empty:
         return fig
@@ -1106,7 +1812,7 @@ def plot_interactive_history(df, title, y_label, line_color, curr_prefix=""):
 
     fig.update_layout(
         title=dict(text=title, font=dict(size=16, color='#222')),
-        xaxis=dict(title="Tanggal", showgrid=True, gridcolor='#F0F0F0'),
+        xaxis=dict(title="Waktu (WIB)", showgrid=True, gridcolor='#F0F0F0'),
         yaxis=dict(title=y_label, showgrid=True, gridcolor='#F0F0F0'),
         hovermode='x unified',
         margin=dict(l=40, r=40, t=50, b=40),
@@ -1114,9 +1820,13 @@ def plot_interactive_history(df, title, y_label, line_color, curr_prefix=""):
         template='plotly_white',
         height=460
     )
+    try:
+        apply_wib_xaxis(fig, timeframe)
+    except Exception:
+        pass
     return fig
 
-def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_prefix=""):
+def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_prefix="", timeframe="1D"):
     fig = go.Figure()
     n = min(len(actual_dates), len(y_test), len(y_pred))
     dates = pd.to_datetime(actual_dates[:n])
@@ -1221,7 +1931,7 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
 
     fig.update_layout(
         title=dict(text='Perbandingan Harga Aktual dan Prediksi', font=dict(size=16, color='#222')),
-        xaxis=dict(title="Tanggal", showgrid=True, gridcolor='#F0F0F0'),
+        xaxis=dict(title="Waktu (WIB)", showgrid=True, gridcolor='#F0F0F0'),
         yaxis=dict(title=y_label, showgrid=True, gridcolor='#F0F0F0'),
         hovermode='x unified',
         margin=dict(l=40, r=40, t=50, b=40),
@@ -1229,9 +1939,13 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
         template='plotly_white',
         height=460
     )
+    try:
+        apply_wib_xaxis(fig, timeframe)
+    except Exception:
+        pass
     return fig
 
-def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix=""):
+def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix="", timeframe="1D"):
     fig = go.Figure()
     today_dt = pd.to_datetime(date.today())
     if hasattr(today_dt, 'tz') and today_dt.tz is not None:
@@ -1577,7 +2291,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             xanchor='center',
             yanchor='top'
         ),
-        xaxis=dict(title="Tanggal", showgrid=True, gridcolor='#F0F0F0'),
+        xaxis=dict(title="Waktu (WIB)", showgrid=True, gridcolor='#F0F0F0'),
         yaxis=dict(title=y_label, showgrid=True, gridcolor='#F0F0F0'),
         hovermode='x unified',
         margin=dict(l=40, r=40, t=110, b=40),
@@ -1591,6 +2305,10 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         template='plotly_white',
         height=480
     )
+    try:
+        apply_wib_xaxis(fig, timeframe)
+    except Exception:
+        pass
     return fig
 
 def calculate_vpvr(df, num_bins=28, value_area_pct=0.70):
@@ -1689,7 +2407,7 @@ def calculate_vpvr(df, num_bins=28, value_area_pct=0.70):
     except Exception:
         return None
 
-def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="Crypto"):
+def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="Crypto", timeframe="1D"):
     if df is None or df.empty:
         return go.Figure()
         
@@ -2136,7 +2854,11 @@ def plot_comprehensive_market_indicators(df, title, curr_prefix="", asset_type="
     else:
         fig.update_yaxes(title_text="Net Delta", row=3, col=1)
         
-    fig.update_xaxes(title_text="Waktu / Tanggal", row=3, col=1)
+    fig.update_xaxes(title_text="Waktu (WIB)", row=3, col=1)
+    try:
+        apply_wib_xaxis(fig, timeframe, rows_cols=[(1, 1), (2, 1), (3, 1)])
+    except Exception:
+        pass
     return fig
 
 def get_metric_badge_info(category):
@@ -2346,13 +3068,13 @@ def evaluate_model_performance(y_test, y_pred):
         "badge": badge
     }
 
-def main(stock, data_source="yfinance", api_key=""):
+def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type="spot", category="auto"):
     if 'current_stock' not in st.session_state:
         st.session_state.current_stock = ""
     if 'training_completed' not in st.session_state:
         st.session_state.training_completed = False
 
-    state_key = f"{stock}_{data_source}"
+    state_key = f"{stock}_{data_source}_{timeframe}_{market_type}_{category}"
     if st.session_state.current_stock != state_key:
         if st.session_state.training_completed:
             st.cache_data.clear()
@@ -2360,21 +3082,50 @@ def main(stock, data_source="yfinance", api_key=""):
             st.session_state.training_completed = False
         st.session_state.current_stock = state_key
 
-    is_cmc = (data_source == "coinmarketcap")
-    is_kraken = (data_source == "kraken")
-    is_intraday = (is_cmc or is_kraken)
-    clean_sym = stock.replace('-USD', '').replace('-IDR', '').replace(' ', '').upper()
-    asset_type = "Crypto" if (is_intraday or is_crypto_ticker(stock)) else "Saham"
-
-    if is_kraken:
-        st.header(f"Prediksi Harga {clean_sym} melalui Kraken API (CNN-GRU)")
-    elif is_cmc:
-        st.header(f"Prediksi Harga {clean_sym} melalui Coinmarketcap (CNN-GRU)")
+    _ds = str(data_source or "yfinance").lower()
+    _cat_in = str(category or "auto").lower()
+    if _cat_in in ("auto", "otomatis", ""):
+        if _ds in ("binance", "bybit", "okx", "coinbase", "bitget", "gate", "kucoin", "mexc", "cryptocom", "kraken", "bitfinex", "upbit", "bithumb", "bitmart", "coinmarketcap", "yfinance-crypto"):
+            _cat = "crypto"
+        elif is_crypto_ticker(stock):
+            _cat = "crypto"
+        else:
+            _t = str(stock or "").upper()
+            if _t.endswith("=X") or _t in ("EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDIDR=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "EURIDR=X"):
+                _cat = "forex"
+            elif _t.endswith("=F") or _t in ("GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "PL=F", "PA=F"):
+                _cat = "komoditas"
+            elif _t in ("SPY", "QQQ", "DIA", "IWM", "EEM", "VTI", "ARKK", "SMH"):
+                _cat = "etf"
+            else:
+                _cat = "saham"
     else:
-        st.header(f"Prediksi Harga {asset_type} dengan kode {stock}")
+        _cat = {"etf gabungan": "etf", "etf saham gabungan": "etf"}.get(_cat_in, _cat_in)
+    category = _cat
+    is_cmc = (_ds == "coinmarketcap")
+    is_kraken = (_ds == "kraken")
+    is_crypto_src = (_ds in ("binance", "bybit", "okx", "coinbase", "bitget", "gate", "kucoin", "mexc", "cryptocom", "kraken", "bitfinex", "upbit", "bithumb", "bitmart", "coinmarketcap", "yfinance", "yfinance-crypto") and category == "crypto")
+    if category == "crypto" and _ds == "yfinance":
+        is_crypto_src = True
+    is_intraday = (not is_daily_or_above(timeframe)) or is_cmc or is_kraken or is_crypto_src
+    if category in ("saham", "etf", "komoditas", "forex") and is_daily_or_above(timeframe):
+        is_intraday = False
+    clean_sym = clean_crypto_base(stock) if category == "crypto" else str(stock or "").strip().upper()
+    asset_label = {"forex": "Forex", "etf": "ETF", "saham": "Saham", "komoditas": "Komoditas", "crypto": "Crypto"}.get(category, "Saham")
+    asset_type = asset_label
+    src_lbl = SOURCE_DISPLAY.get(_ds, _ds.upper())
+    tf_lbl = TIMEFRAME_LABEL_ID.get(str(timeframe), str(timeframe))
+    st.header(f"Prediksi Harga {clean_sym} ({asset_label} • {src_lbl} • {tf_lbl} • WIB)")
+    st.caption(f"Sumber: **{src_lbl}** | Pasar: **{market_type}** | Timeframe: **{tf_lbl}** | Zona: **WIB (UTC+7)** | Acuan \u2018hari ini\u2019 = **data terakhir WIB** (dapat diubah di Pengumpulan Data).")
 
     # Ringkasan Metrik di bawah header
-    curr_prefix = "$ " if (is_intraday or stock.endswith('-USD') or stock.endswith('-IDR') or 'USD' in stock) else "Rp "
+    _s_up = str(stock or "").upper()
+    if category == "crypto" or category == "forex" or _s_up.endswith("-USD") or _s_up.endswith("-IDR") or "USD" in _s_up:
+        curr_prefix = "$ "
+        if _s_up.endswith("-IDR") or "IDR" in _s_up:
+            curr_prefix = "Rp "
+    else:
+        curr_prefix = "Rp " if (".JK" in _s_up or category in ("saham", "etf")) else "$ "
     last_vol = 0.0
     last_pr = 0.0
     vol_24h_val = 0.0
@@ -2383,20 +3134,27 @@ def main(stock, data_source="yfinance", api_key=""):
     last_dt = "-"
     last_pr_str = "-"
     
-    # 1. Fetch live historical / snapshot data from dedicated API
+    # 1. Fetch snapshot unifikasi (WIB) + fallback otomatis berurutan
+    actual_source = _ds
+    gran_info = {"label": "-", "kelas": "unknown", "seconds": None}
     try:
-        if is_kraken:
-            quick_df = fetch_kraken_data(clean_sym, api_key=api_key, interval="1m", count=1000)
-        elif is_cmc:
-            quick_df = fetch_coinmarketcap_data(clean_sym, api_key=api_key, interval="1m", count=1000)
-        elif crypto_yfinance and is_crypto_ticker(stock):
-            quick_df = cyf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
+        if category == "crypto":
+            _src_try = "yfinance" if _ds == "yfinance-crypto" else _ds
+            quick_df, actual_source, gran_info, _need_key = fetch_unified(category, stock, _src_try, timeframe, market_type, api_key, limit=1000)
+            if (quick_df is None or getattr(quick_df, "empty", True) or len(quick_df) < 10) and _src_try not in ("binance",):
+                _fb_df, _fb_src = try_crypto_fallback_chain(stock, timeframe, market_type, api_key, exclude=(_src_try,))
+                if _fb_df is not None and not _fb_df.empty and len(_fb_df) >= 10:
+                    quick_df, actual_source = _fb_df, _fb_src
+                    gran_info = infer_granularity(quick_df)
+        elif category == "forex":
+            quick_df, actual_source, gran_info, _need_key = fetch_unified(category, stock, _ds if _ds in FOREX_SOURCES_ORDERED else "yfinance", "1D", "spot", api_key)
         else:
-            quick_df = yf.download(stock, start="2020-01-01", end=date.today().strftime("%Y-%m-%d"))
-        
+            quick_df, actual_source, gran_info, _need_key = fetch_unified(category, stock, _ds if _ds in ("yfinance", "stooq") else "yfinance", "1D", "spot", api_key)
+        if quick_df is None:
+            quick_df = pd.DataFrame()
         if not quick_df.empty:
             quick_df = ensure_datetime_index(quick_df)
-            last_dt = format_timestamp_for_plot(quick_df.index[-1])
+            last_dt = fmt_wib(quick_df.index[-1])
             last_pr = safe_float(quick_df['Close'].iloc[-1])
             last_pr_str = smart_format(last_pr, prefix=curr_prefix)
             if 'Volume' in quick_df.columns:
@@ -2406,11 +3164,14 @@ def main(stock, data_source="yfinance", api_key=""):
                     vol_24h_val = float(last_24h_slice['Volume'].sum())
                 else:
                     vol_24h_val = last_vol
-                
                 if len(quick_df) >= 2:
                     v_now = safe_float(quick_df['Volume'].iloc[-1])
                     v_prev = safe_float(quick_df['Volume'].iloc[-2])
                     vol_chg_24h = ((v_now - v_prev) / v_prev) * 100.0 if v_prev > 0 else 0.0
+            try:
+                st.caption(f"Terdeteksi granularitas aktual: **{gran_info.get('label', '-')}** | Sumber aktual: **{SOURCE_DISPLAY.get(actual_source, actual_source)}** | Data terakhir (WIB): **{last_dt}**")
+            except Exception:
+                pass
     except Exception:
         quick_df = pd.DataFrame()
 
@@ -2477,11 +3238,37 @@ def main(stock, data_source="yfinance", api_key=""):
         else:
             st.metric("Perubahan Volume (24 Jam)", "-")
 
-    # Mini Trend Metrics: If Intraday (CMC / Kraken) show 10 metrics (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)
+    # Mini Trend Metrics ADAPTIF (anchor = Data Terakhir WIB, bedakan YTD vs 1Y)
     if not quick_df.empty and len(quick_df) >= 2:
         if is_intraday:
-            src_lbl = "Kraken" if is_kraken else "CoinMarketCap"
-            render_coinmarketcap_mini_metrics(quick_df, f"{clean_sym} ({src_lbl})")
+            _mp = build_mini_periods_for_tf(timeframe)
+            _mvals = []
+            for _lbl, _dl in _mp:
+                try:
+                    if isinstance(_dl, str) and _dl == "YTD":
+                        _sl = ytd_slice(quick_df)
+                        _v = get_change_pct(_sl if not _sl.empty else quick_df, 365) if (not _sl.empty and len(_sl) >= 2) else None
+                    else:
+                        _v = get_time_change_pct(quick_df, _dl)
+                    _mvals.append((_lbl, _v))
+                except Exception:
+                    _mvals.append((_lbl, None))
+            try:
+                _last_wib = fmt_wib(quick_df.index[-1])
+            except Exception:
+                _last_wib = "-"
+            st.markdown(f"**Performa Perubahan Harga {clean_sym} ({src_lbl if (src_lbl := SOURCE_DISPLAY.get(actual_source, actual_source)) else ''}) — acuan Data Terakhir WIB ({_last_wib}):**")
+            _cols = st.columns(len(_mvals))
+            for (_col, (_lbl, _val)) in zip(_cols, _mvals):
+                with _col:
+                    if _val is not None and not pd.isna(_val):
+                        _c = "#00C853" if _val >= 0 else "#D50000"
+                        _a = "▲" if _val >= 0 else "▼"
+                        _s = "+" if _val > 0 else ""
+                        _bg = "rgba(0, 200, 83, 0.08)" if _val >= 0 else "rgba(213, 0, 0, 0.08)"
+                        st.markdown(f"<div style='background-color: {_bg}; padding: 8px 6px; border-radius: 8px; border-left: 4px solid {_c}; text-align: center;'><div style='font-size: 11px; color: #555; font-weight: 600;'>{_lbl}</div><div style='font-size: 14px; font-weight: bold; color: {_c}; margin-top: 2px;'>{_a} {_s}{_val:.2f}%</div></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='background-color: #f5f5f5; padding: 8px 6px; border-radius: 8px; text-align: center;'><div style='font-size: 11px; color: #777; font-weight: 600;'>{_lbl}</div><div style='font-size: 14px; font-weight: bold; color: #999; margin-top: 2px;'>-</div></div>", unsafe_allow_html=True)
         else:
             c_now = safe_float(quick_df['Close'].iloc[-1])
             c_prev = safe_float(quick_df['Close'].iloc[-2])
@@ -2490,15 +3277,28 @@ def main(stock, data_source="yfinance", api_key=""):
             chg_1m = get_change_pct(quick_df, 30)
             chg_90d = get_change_pct(quick_df, 90)
             chg_ytd = get_change_pct(quick_df, 365)
-
-            st.markdown(f"**Performa Perubahan Harga {stock}:**")
-            c1, c2, c3, c4, c5 = st.columns(5)
+            try:
+                _ytd_sl = ytd_slice(quick_df)
+                if not _ytd_sl.empty and len(_ytd_sl) >= 2:
+                    _c0 = safe_float(_ytd_sl['Close'].iloc[0]); _c1 = safe_float(_ytd_sl['Close'].iloc[-1])
+                    chg_ytd_cal = ((_c1 - _c0) / _c0 * 100.0) if _c0 > 0 else None
+                else:
+                    chg_ytd_cal = None
+            except Exception:
+                chg_ytd_cal = None
+            try:
+                _last_wib2 = fmt_wib(quick_df.index[-1])
+            except Exception:
+                _last_wib2 = "-"
+            st.markdown(f"**Performa Perubahan Harga {stock} \u2014 acuan Data Terakhir WIB ({_last_wib2}):**")
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             metrics_list = [
                 (c1, "1 Hari (1D)", chg_1d),
                 (c2, "1 Minggu (1W)", chg_1w),
                 (c3, "1 Bulan (1M)", chg_1m),
                 (c4, "90 Hari (90D)", chg_90d),
-                (c5, "1 Tahun (YTD)", chg_ytd)
+                (c5, "1 Thn (365D)", chg_ytd),
+                (c6, "YTD (1 Jan)", chg_ytd_cal)
             ]
             for col, label, val in metrics_list:
                 with col:
@@ -2572,17 +3372,30 @@ def main(stock, data_source="yfinance", api_key=""):
                 st.error(f"Error loading data for {ticker}: {str(e)}")
                 return pd.DataFrame()
 
-        # DATA HISTORY
-        if is_cmc:
-            full_data = quick_df.copy()
+        # DATA HISTORY (WIB; crypto mengikuti timeframe+exchange, non-crypto full harian)
+        if category == "crypto":
+            full_data = quick_df.copy() if (quick_df is not None and not quick_df.empty) else pd.DataFrame()
+            if full_data.empty:
+                _fb2, _fb2s = try_crypto_fallback_chain(stock, timeframe, market_type, api_key)
+                if _fb2 is not None and not _fb2.empty:
+                    full_data = _fb2.copy()
+                    actual_source = _fb2s
         else:
-            full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
+            try:
+                _full_try, _full_src, _, _ = fetch_unified(category, stock, ("yfinance" if _ds not in ("yfinance", "stooq") else _ds), "1D", "spot", api_key)
+            except Exception:
+                _full_try, _full_src = pd.DataFrame(), "yfinance"
+            if _full_try is not None and not _full_try.empty and len(_full_try) >= 30:
+                full_data = _full_try.copy()
+                actual_source = _full_src
+            else:
+                full_data = load_data(stock, "2000-01-01", date.today().strftime("%Y-%m-%d")).copy()
 
         if full_data.empty or len(full_data) == 0:
             st.error(f"❌ Simbol ticker **'{stock}'** tidak ditemukan atau data historis tidak tersedia.", icon=":material/error:")
             st.info("""
             💡 **Panduan Format Input Ticker yang Benar:**
-            - **CoinMarketCap**: Masukkan simbol koin langsung (contoh: `BTC`, `ETH`, `DOGE`, `SOL`, `BNB`, `XRP`).
+            - **Crypto (multi-exchange publik: Binance/Bybit/OKX/Coinbase/dll.)**: Masukkan simbol koin langsung (contoh: `BTC`, `ETH`, `DOGE`, `SOL`, `BNB`, `XRP`) + pilih Timeframe (1s/1m/15m/1H/1D/...) & Pasar (spot/futures/perpetual/option) setelah Enter. CoinMarketCap butuh API key; exchange lain publik tanpa key.
             - **Aset Kripto (yFinance)**: Tambahkan `-USD` di akhir simbol (contoh: `BTC-USD`, `ETH-USD`, `DOGE-USD`).
             - **Saham Indonesia (BEI / IDX)**: Tambahkan `.JK` di akhir kode emiten (contoh: `BBCA.JK`, `BMRI.JK`, `TLKM.JK`).
             - **Saham Global (Wall Street / US)**: Masukkan kode ticker langsung (contoh: `AAPL`, `NVDA`, `TSLA`, `MSFT`).
@@ -2609,12 +3422,12 @@ def main(stock, data_source="yfinance", api_key=""):
             full_chart_color = '#00C853'
 
         # Plot Interaktif dengan Plotly untuk data keseluruhan (Warna dinamis Hijau Naik / Merah Turun)
-        fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', full_chart_color, curr_prefix=curr_prefix)
+        fig1 = plot_interactive_history(full_data, f'Data Keseluruhan Harga {asset_type}', f'Harga {asset_type}', full_chart_color, curr_prefix=curr_prefix, timeframe=timeframe)
         if fig1 is not None:
             render_plotly_with_tools(fig1, key="fig_full_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Keseluruhan)", expanded=False):
-            fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+            fig_full_comp = plot_comprehensive_market_indicators(full_data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Keseluruhan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
             if fig_full_comp is not None:
                 render_plotly_with_tools(fig_full_comp, key="fig_full_data_comp_indicators")
 
@@ -2679,7 +3492,8 @@ def main(stock, data_source="yfinance", api_key=""):
             ("YTD", timedelta(days=365))
         ]
 
-        if is_intraday:
+        _use_intraday_ui = bool(is_intraday or category == "crypto")
+        if _use_intraday_ui:
             end_btn_key = f"{data_source}_end_offset_btn"
             preset_sel_key = f"{data_source}_preset_selected"
             if end_btn_key not in st.session_state:
@@ -3060,40 +3874,44 @@ def main(stock, data_source="yfinance", api_key=""):
             st.markdown(f"**Performa Perubahan Data Pelatihan:** {tot_sign_t} (`{diff_sign_t}{tot_diff_str_t}`)")
 
         # Plot Interaktif dengan Plotly untuk data pelatihan (Garis Kuning)
-        fig_train = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#D6C36B', curr_prefix=curr_prefix)
+        fig_train = plot_interactive_history(data, f'Data Pelatihan Harga {asset_type}', f'Harga {asset_type}', '#D6C36B', curr_prefix=curr_prefix, timeframe=timeframe)
         if fig_train is not None:
             render_plotly_with_tools(fig_train, key="fig_train_data_history")
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
-            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
             if fig_train_comp is not None:
                 render_plotly_with_tools(fig_train_comp, key="fig_train_data_comp_indicators")
 
         # Toggle Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta
-        expander_title = "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 12H, 1D)" if is_intraday else "📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume (1D, 1W, 1M, 90D, YTD)"
+        _mini_defs = build_mini_periods_for_tf(timeframe)
+        _mini_lbl = ", ".join([_l for _l, _ in _mini_defs])
+        expander_title = f"📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume ({_mini_lbl}) — WIB, acuan Data Terakhir"
         with st.expander(expander_title, expanded=False):
             if not data.empty:
-                if is_intraday:
-                    period_slices = [
-                        ("1m", get_time_period_slice(data, timedelta(minutes=1)), get_time_change_pct(data, timedelta(minutes=1))),
-                        ("3m", get_time_period_slice(data, timedelta(minutes=3)), get_time_change_pct(data, timedelta(minutes=3))),
-                        ("5m", get_time_period_slice(data, timedelta(minutes=5)), get_time_change_pct(data, timedelta(minutes=5))),
-                        ("15m", get_time_period_slice(data, timedelta(minutes=15)), get_time_change_pct(data, timedelta(minutes=15))),
-                        ("30m", get_time_period_slice(data, timedelta(minutes=30)), get_time_change_pct(data, timedelta(minutes=30))),
-                        ("1H", get_time_period_slice(data, timedelta(hours=1)), get_time_change_pct(data, timedelta(hours=1))),
-                        ("2H", get_time_period_slice(data, timedelta(hours=2)), get_time_change_pct(data, timedelta(hours=2))),
-                        ("4H", get_time_period_slice(data, timedelta(hours=4)), get_time_change_pct(data, timedelta(hours=4))),
-                        ("12H", get_time_period_slice(data, timedelta(hours=12)), get_time_change_pct(data, timedelta(hours=12))),
-                        ("1D", get_time_period_slice(data, timedelta(days=1)), get_time_change_pct(data, timedelta(days=1)))
-                    ]
-                else:
-                    period_slices = [
-                        ("1 Hari (1D)", get_period_slice(data, 1), get_change_pct(data, 1)),
-                        ("1 Minggu (1W)", get_period_slice(data, 7), get_change_pct(data, 7)),
-                        ("1 Bulan (1M)", get_period_slice(data, 30), get_change_pct(data, 30)),
-                        ("90 Hari (90D)", get_period_slice(data, 90), get_change_pct(data, 90)),
-                        ("1 Tahun (YTD)", get_period_slice(data, 365), get_change_pct(data, 365))
-                    ]
+                try:
+                    _last_mini_wib = fmt_wib(data.index[-1])
+                except Exception:
+                    _last_mini_wib = "-"
+                st.caption(f"Acuan \u2018hari ini\u2019 = **Data Terakhir WIB ({_last_mini_wib})**. Timeframe aktif: **{TIMEFRAME_LABEL_ID.get(str(timeframe), timeframe)}**. YTD = 1 Jan s/d Terakhir; 1Y/1 Thn = 365 hari ke belakang.")
+                period_slices = []
+                for _lbl, _span in _mini_defs:
+                    try:
+                        if isinstance(_span, str) and _span == "YTD":
+                            _sdf = ytd_slice(data)
+                            if _sdf.empty or len(_sdf) < 2:
+                                period_slices.append((_lbl, pd.DataFrame(), None))
+                            else:
+                                _c0 = safe_float(_sdf['Close'].iloc[0]); _c1 = safe_float(_sdf['Close'].iloc[-1])
+                                _ch = ((_c1 - _c0) / _c0 * 100.0) if _c0 > 0 else None
+                                period_slices.append((_lbl, _sdf, _ch))
+                        elif is_intraday:
+                            period_slices.append((_lbl, get_time_period_slice(data, _span), get_time_change_pct(data, _span)))
+                        else:
+                            _days = max(1, int(_span.total_seconds() // 86400))
+                            period_slices.append((_lbl, get_period_slice(data, _days), get_change_pct(data, _days)))
+                    except Exception:
+                        period_slices.append((_lbl, pd.DataFrame(), None))
                 
                 # 1. Baris Chart Harga (Garis Close Tanpa VWAP)
                 st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Garis Hijau: Tren Naik / Garis Merah: Tren Turun):**")
@@ -3256,7 +4074,7 @@ def main(stock, data_source="yfinance", api_key=""):
 
     with st.expander("3. Pra-pemrosesan Data"):
 
-        is_valid_data = len(data) >= 30 if is_intraday else (days >= 120)
+        is_valid_data = len(data) >= 30 if (is_intraday or category == "crypto") else (days >= 120)
 
         if is_valid_data:
             st.info(f"⚡ **Penyesuaian Otomatis Berdasarkan Ukuran Data ({n_data_samples:,} baris):** Kategori **{dataset_category_desc}** aktif. {act_explanation}", icon=":material/auto_awesome:")
@@ -3511,120 +4329,17 @@ def main(stock, data_source="yfinance", api_key=""):
                         f"- Learning Rate Otomatis: **{auto_lr:.4f}**", icon=":material/auto_awesome:")
                 st.warning(f"Ket: {act_explanation} Konfigurasi otomatis ini dirancang secara ilmiah untuk menyeimbangkan kecepatan konvergensi dan generalisasi model.", icon=":material/insights:")
 
-            # Forecasting Options
-            def get_cmc_forecast_options():
-                return [
-                    ("1 Menit (1m)", 1),
-                    ("3 Menit (3m)", 3),
-                    ("5 Menit (5m)", 5),
-                    ("10 Menit (10m)", 10),
-                    ("15 Menit (15m)", 15),
-                    ("30 Menit (30m)", 30),
-                    ("45 Menit (45m)", 45),
-                    ("1 Jam (1h)", 60),
-                    ("2 Jam (2h)", 120),
-                    ("3 Jam (3h)", 180),
-                    ("4 Jam (4h)", 240),
-                    ("6 Jam (6h)", 360),
-                    ("8 Jam (8h)", 480),
-                    ("12 Jam (12h)", 720),
-                    ("1 Hari (24h)", 1440),
-                    ("2 Hari (48h)", 2880),
-                    ("3 Hari (72h)", 4320),
-                    ("1 Minggu (7D)", 10080)
-                ]
-
-            default_cmc_options_map = {
-                1: ["1 Menit (1m)"],
-                3: ["1 Menit (1m)", "3 Menit (3m)"],
-                5: ["1 Menit (1m)", "3 Menit (3m)", "5 Menit (5m)"],
-                10: ["1 Menit (1m)", "5 Menit (5m)", "10 Menit (10m)"],
-                15: ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)"],
-                30: ["1 Menit (1m)", "5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)"],
-                45: ["5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "45 Menit (45m)"],
-                60: ["5 Menit (5m)", "15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)"],
-                120: ["15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)", "2 Jam (2h)"],
-                180: ["15 Menit (15m)", "30 Menit (30m)", "1 Jam (1h)", "3 Jam (3h)"],
-                240: ["30 Menit (30m)", "1 Jam (1h)", "2 Jam (2h)", "4 Jam (4h)"],
-                360: ["30 Menit (30m)", "1 Jam (1h)", "3 Jam (3h)", "6 Jam (6h)"],
-                480: ["1 Jam (1h)", "2 Jam (2h)", "4 Jam (4h)", "8 Jam (8h)"],
-                720: ["1 Jam (1h)", "3 Jam (3h)", "6 Jam (6h)", "12 Jam (12h)"],
-                1440: ["1 Jam (1h)", "6 Jam (6h)", "12 Jam (12h)", "1 Hari (24h)"],
-                2880: ["6 Jam (6h)", "12 Jam (12h)", "1 Hari (24h)", "2 Hari (48h)"],
-                4320: ["12 Jam (12h)", "1 Hari (24h)", "2 Hari (48h)", "3 Hari (72h)"],
-                10080: ["1 Hari (24h)", "2 Hari (48h)", "3 Hari (72h)", "1 Minggu (7D)"]
-            }
-
-            def initialize_cmc_forecast_options(x_test):
-                f_opts = get_cmc_forecast_options()
-                f_dict = {name: steps for name, steps in f_opts}
-                f_steps = x_test.shape[0]
-
-                valid_opts = {name: steps for name, steps in f_dict.items() if steps <= f_steps}
-                if not valid_opts:
-                    max_s = max((steps for steps in f_dict.values() if steps <= f_steps), default=1)
-                    valid_opts = {name: steps for name, steps in f_dict.items() if steps == max_s}
-                if not valid_opts:
-                    valid_opts = {"1 Menit (1m)": 1}
-
-                closest_key = min(default_cmc_options_map.keys(), key=lambda x: abs(x - f_steps))
-                def_opts = default_cmc_options_map[closest_key]
-                def_opts = [o for o in def_opts if o in valid_opts]
-                if not def_opts:
-                    def_opts = list(valid_opts.keys())[:min(len(valid_opts), 4)]
-                return valid_opts, def_opts
-
-            def get_forecast_options(stock):
-                return [
-                    ("1 Hari", 1), ("2 Hari", 2), ("3 Hari", 3), ("4 Hari", 4), ("5 Hari", 5), ("6 Hari", 6),
-                    ("1 Minggu", 7), ("2 Minggu", 14), ("3 Minggu", 21), ("1 Bulan", 30), ("2 Bulan", 60),
-                    ("3 Bulan", 90), ("4 Bulan", 120), ("5 Bulan", 150), ("6 Bulan", 180), ("7 Bulan", 210),
-                    ("8 Bulan", 240), ("9 Bulan", 270), ("10 Bulan", 300), ("11 Bulan", 330), ("1 Tahun", 365),
-                    ("2 Tahun", 730)
-                ]
-
-            default_options_map = {
-                3: ["1 Hari", "2 Hari", "3 Hari"],
-                4: ["2 Hari", "3 Hari", "4 Hari"],
-                5: ["3 Hari", "4 Hari", "5 Hari"],
-                6: ["4 Hari", "5 Hari", "6 Hari"],
-                7: ["5 Hari", "6 Hari", "1 Minggu"],
-                14: ["6 Hari", "1 Minggu", "2 Minggu"],
-                21: ["1 Minggu", "2 Minggu", "3 Minggu"],
-                30: ["1 Minggu", "2 Minggu", "1 Bulan"],
-                60: ["1 Minggu", "1 Bulan", "2 Bulan"],
-                90: ["1 Minggu", "1 Bulan", "3 Bulan"],
-                120: ["1 Minggu", "1 Bulan", "3 Bulan", "4 Bulan"],
-                150: ["1 Minggu", "1 Bulan", "3 Bulan", "5 Bulan"],
-                180: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"],
-                210: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "7 Bulan"],
-                240: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "8 Bulan"],
-                270: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "9 Bulan"],
-                300: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "10 Bulan"],
-                330: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "11 Bulan"],
-                365: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun"],
-                730: ["1 Minggu", "1 Bulan", "3 Bulan", "6 Bulan", "1 Tahun", "2 Tahun"]
-            }
-
-            def initialize_forecast_options(stock, x_test):
-                f_opts = get_forecast_options(stock)
-                f_dict = {name: d for name, d in f_opts}
-                f_days = x_test.shape[0]
-                valid_opts = {name: d for name, d in f_dict.items() if d <= f_days}
-                if not valid_opts:
-                    max_d = max(d for d in f_dict.values() if d <= f_days)
-                    valid_opts = {name: d for name, d in f_dict.items() if d == max_d}
-                closest_key = min(default_options_map.keys(), key=lambda x: abs(x - f_days))
-                def_opts = default_options_map[closest_key]
-                def_opts = [o for o in def_opts if o in valid_opts]
-                return valid_opts, def_opts
-
-            if is_intraday:
-                forecast_options_dict, default_options = initialize_cmc_forecast_options(x_test)
-            else:
-                forecast_options_dict, default_options = initialize_forecast_options(stock, x_test)
-
-            fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}_{data_source}"
+            # Forecasting Options ADAPTIF (mengikuti timeframe & n_test; maks = min(n_test, horizon))
+            try:
+                _n_test_fc = int(x_test.shape[0]) if hasattr(x_test, 'shape') else 0
+            except Exception:
+                _n_test_fc = 0
+            forecast_options_dict, default_options = build_forecast_options_for_tf(timeframe, _n_test_fc)
+            try:
+                st.caption(f"Basis forecasting mengikuti timeframe **{TIMEFRAME_LABEL_ID.get(str(timeframe), timeframe)}** (WIB). Maksimal horizon dibatasi jumlah data pengujian (**{_n_test_fc}** langkah). Default otomatis dipilih **{len(default_options)}** opsi tengah.")
+            except Exception:
+                pass
+            fc_key = f"selected_forecast_periods_{stock}_{len(x_test)}_{data_source}_{timeframe}_{market_type}"
             if fc_key not in st.session_state:
                 st.session_state[fc_key] = default_options
 
@@ -3747,13 +4462,13 @@ def main(stock, data_source="yfinance", api_key=""):
                 actual_dates = data.index[-len(y_test):]
 
                 # Plot Interaktif Evaluasi
-                fig_eval = plot_interactive_evaluation(actual_dates, y_test_original, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix)
+                fig_eval = plot_interactive_evaluation(actual_dates, y_test_original, y_pred, f'Harga {asset_type}', curr_prefix=curr_prefix, timeframe=timeframe)
                 if fig_eval is not None:
                     render_plotly_with_tools(fig_eval, key="fig_eval_chart")
 
                 with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pengujian)", expanded=False):
                     test_df = data.iloc[-len(y_test):]
-                    fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                    fig_eval_comp = plot_comprehensive_market_indicators(test_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pengujian {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
                     if fig_eval_comp is not None:
                         render_plotly_with_tools(fig_eval_comp, key="fig_eval_comp_indicators")
 
@@ -3876,14 +4591,15 @@ def main(stock, data_source="yfinance", api_key=""):
                         date_range=date_range,
                         forecast=forecast,
                         y_label=f'Harga {asset_type}',
-                        curr_prefix=curr_prefix
+                        curr_prefix=curr_prefix,
+                        timeframe=timeframe
                     )
                     if fig_fc is not None:
                         render_plotly_with_tools(fig_fc, key=f"fig_forecast_{forecast_period}_{i}")
 
                     with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume ({forecast_period})", expanded=False):
                         fc_slice_df = data.iloc[start_idx:]
-                        fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type)
+                        fig_fc_comp = plot_comprehensive_market_indicators(fc_slice_df, f'Indikator Pasar Komprehensif Candlestick & VPVR (Periode {forecast_period} {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
                         if fig_fc_comp is not None:
                             render_plotly_with_tools(fig_fc_comp, key=f"fig_forecast_comp_{forecast_period}_{i}")
 
@@ -4070,6 +4786,131 @@ def main(stock, data_source="yfinance", api_key=""):
         else:
             st.warning('Harus Melakukan Pelatihan Model Terlebih dahulu', icon=":material/exclamation:")
 
+
+# =====================================================================
+# RENDERER HALAMAN ASET UNIFIKASI (dipakai 5 kategori di sidebar)
+# Alur: preset -> input simbol + Enter -> pilih Sumber (likuid dulu) ->
+# tombol Pasar (spot/futures/perpetual/option) + tombol Timeframe
+# (detik/menit/jam/hari) -> badge granularitas -> API key hanya jika gagal.
+# =====================================================================
+def _sources_for_category(category):
+    if category == "crypto":
+        return list(CRYPTO_SOURCES_ORDERED)
+    if category == "forex":
+        return list(FOREX_SOURCES_ORDERED)
+    if category == "etf":
+        return list(ETF_SOURCES_ORDERED)
+    if category == "komoditas":
+        return list(COMMODITY_SOURCES_ORDERED)
+    return list(STOCK_SOURCES_ORDERED)
+
+def _probe_ok(category, symbol, source, timeframe, market_type, api_key):
+    try:
+        if category == "crypto":
+            _s = "yfinance" if source == "yfinance-crypto" else source
+            df, _, _, _need = fetch_unified(category, symbol, _s, timeframe, market_type, api_key, limit=120)
+        else:
+            df, _, _, _need = fetch_unified(category, symbol, source if source in ("yfinance", "stooq") else "yfinance", "1D", "spot", api_key)
+        ok = df is not None and not df.empty and len(df) >= 10
+        return ok, df
+    except Exception:
+        return False, pd.DataFrame()
+
+def render_unified_asset_page(category, header_html, desc_html, tips_md, presets, default_symbol, key_prefix, need_cmc_key=False):
+    if f"{key_prefix}_sym" not in st.session_state:
+        st.session_state[f"{key_prefix}_sym"] = default_symbol
+    if f"{key_prefix}_src" not in st.session_state:
+        st.session_state[f"{key_prefix}_src"] = _sources_for_category(category)[0]
+    if f"{key_prefix}_mt" not in st.session_state:
+        st.session_state[f"{key_prefix}_mt"] = "spot"
+    if f"{key_prefix}_tf" not in st.session_state:
+        _def_tf = "1m" if category == "crypto" else "1D"
+        st.session_state[f"{key_prefix}_tf"] = _def_tf
+    st.markdown(header_html, unsafe_allow_html=True)
+    st.markdown(desc_html, unsafe_allow_html=True)
+    st.info("Silakan scroll ke bawah halaman untuk melakukan forecasting/prediksi setelah memilih simbol + Sumber + Pasar + Timeframe.")
+    # Preset populer
+    st.write("**Pilihan Populer (klik untuk mengisi otomatis)**")
+    _cols = st.columns(4)
+    for _i, _p in enumerate(presets):
+        with _cols[_i % 4]:
+            if st.button(str(_p), key=f"{key_prefix}_preset_{_i}"):
+                st.session_state[f"{key_prefix}_sym"] = str(_p)
+                st.rerun()
+    if tips_md:
+        with st.expander("Ketentuan & Tips Penulisan Simbol", expanded=False):
+            st.markdown(tips_md)
+    st.write("")
+    st.markdown("**Masukkan Simbol + Tekan Enter**")
+    c_in, c_btn = st.columns([5, 1])
+    with c_in:
+        _sym = st.text_input("Simbol", value=st.session_state[f"{key_prefix}_sym"], placeholder=default_symbol, label_visibility="collapsed", key=f"{key_prefix}_in")
+    with c_btn:
+        _enter = st.button("Enter", type="primary", use_container_width=True, key=f"{key_prefix}_enter")
+    if _enter and _sym:
+        st.session_state[f"{key_prefix}_sym"] = _sym
+    symbol = (st.session_state.get(f"{key_prefix}_sym") or "").strip() or default_symbol
+    # ---- Baris Sumber (diurut likuiditas/volume tertinggi) ----
+    _srcs = _sources_for_category(category)
+    _src_labels = [SOURCE_DISPLAY.get(s, s) for s in _srcs]
+    _cur_src = st.session_state.get(f"{key_prefix}_src", _srcs[0])
+    try:
+        _src_idx = _srcs.index(_cur_src)
+    except Exception:
+        _src_idx = 0
+    _sel_label = st.radio("Sumber Data (publik, urut likuiditas tertinggi)", options=_src_labels, index=_src_idx, horizontal=True, key=f"{key_prefix}_src_radio")
+    try:
+        source = _srcs[_src_labels.index(_sel_label)]
+    except Exception:
+        source = _srcs[0]
+    st.session_state[f"{key_prefix}_src"] = source
+    # ---- Tombol Pasar + Timeframe (sesudah Enter) ----
+    _markets = SOURCE_MARKETS.get(source, ["spot"])
+    _tfs = SOURCE_TIMEFRAMES.get(source, ["1D"])
+    c_mt, c_tf = st.columns(2)
+    with c_mt:
+        _cur_mt = st.session_state.get(f"{key_prefix}_mt", "spot")
+        _mt_idx = _markets.index(_cur_mt) if _cur_mt in _markets else 0
+        _mt = st.radio("Pasar / Tipe Instrumen", options=_markets, index=_mt_idx, horizontal=True, key=f"{key_prefix}_mt_radio")
+        st.session_state[f"{key_prefix}_mt"] = _mt
+    with c_tf:
+        _cur_tf = st.session_state.get(f"{key_prefix}_tf", (_tfs[0] if _tfs else "1D"))
+        _tf_idx = _tfs.index(_cur_tf) if _cur_tf in _tfs else 0
+        _tf = st.radio("Timeframe / Granularitas Data", options=_tfs, index=_tf_idx, horizontal=True, key=f"{key_prefix}_tf_radio")
+        st.session_state[f"{key_prefix}_tf"] = _tf
+    market_type = st.session_state.get(f"{key_prefix}_mt", "spot")
+    timeframe = st.session_state.get(f"{key_prefix}_tf", "1D")
+    # ---- Probe publik dulu; API key hanya jika gagal ----
+    _api_key_val = ""
+    if source == "coinmarketcap" or need_cmc_key:
+        _def_key = ""
+        try:
+            _def_key = get_cmc_api_key_from_env_or_secrets() or ""
+        except Exception:
+            _def_key = ""
+        ok_probe, _pdf = _probe_ok(category, symbol, source, timeframe, market_type, _def_key)
+        _gr = infer_granularity(_pdf) if ok_probe else {"label": "-"}
+        if ok_probe:
+            st.caption(f"Deteksi data: **{_gr.get('label', '-')}** | Timeframe dipilih: **{TIMEFRAME_LABEL_ID.get(timeframe, timeframe)}** (WIB). API key terdeteksi / data publik berhasil.")
+            _api_key_val = st.text_input("API Key (opsional, sudah berhasil tanpa key)", value=_def_key, type="password", key=f"{key_prefix}_key_opt")
+        else:
+            st.warning("Gagal mengambil data publik. Harap masukkan API key.", icon=":material/key:")
+            _api_key_val = st.text_input("Masukkan API Key", value=_def_key, type="password", key=f"{key_prefix}_key_req")
+    else:
+        ok_probe, _pdf = _probe_ok(category, symbol, source, timeframe, market_type, "")
+        _gr = infer_granularity(_pdf) if ok_probe else {"label": "-"}
+        if ok_probe:
+            st.caption(f"Data publik **berhasil** via **{SOURCE_DISPLAY.get(source, source)}** (tanpa API key). Deteksi: **{_gr.get('label', '-')}** | Timeframe: **{TIMEFRAME_LABEL_ID.get(timeframe, timeframe)}** (WIB). Bagian API key disembunyikan.")
+        else:
+            st.warning(f"Data via **{SOURCE_DISPLAY.get(source, source)}** gagal/limit. Otomatis fallback ke sumber likuid berikutnya saat training. Jika semua gagal, masukkan API key (khusus CoinMarketCap).", icon=":material/warning:")
+            _api_key_val = st.text_input("API Key (hanya jika semua publik gagal)", value="", type="password", key=f"{key_prefix}_key_fb")
+    if not symbol:
+        st.warning("Silakan masukkan simbol terlebih dahulu")
+        return
+    st.cache_data.clear()
+    main(symbol, data_source=(source if source != "yfinance-crypto" else "yfinance"), api_key=_api_key_val, timeframe=timeframe, market_type=market_type, category=category)
+
+
 if __name__ == "__main__":
     
     manual_select_type = None
@@ -4130,25 +4971,29 @@ if __name__ == "__main__":
             selected = option_menu(
                 menu_title=None,
                 options=[
-                    "Input Saham Custom",
-                    "Input Crypto (CoinMarketCap)",
-                    "Input Crypto (Kraken API)",
+                    "Input Forex (Multi-Source)",
+                    "Input ETF / Saham Gabungan",
+                    "Input Saham Custom (yFinance)",
+                    "Input Komoditas",
+                    "Input Crypto (Multi-Exchange)",
                     "PT Bank Mandiri Tbk (Bank Mandiri)",
                     "PT Bank Rakyat Indonesia Tbk (BRI)",
                     "PT Bank Central Asia Tbk (BCA)",
                     "PT Bank Negara Indonesia Tbk (BNI)",
                     "PT Bank Syariah Indonesia Tbk (BSI)"
                 ],
-                icons=["search", "currency-bitcoin", "wallet2", "bank", "bank", "bank", "bank", "bank"],
+                icons=["currency-exchange", "grid", "search", "barrel", "currency-bitcoin", "bank", "bank", "bank", "bank", "bank"],
                 default_index=st.session_state.selected_index_pred,
                 manual_select=manual_select_pred,
                 orientation="vertikal"
             )
             
             pred_options = [
-                "Input Saham Custom",
-                "Input Crypto (CoinMarketCap)",
-                "Input Crypto (Kraken API)",
+                "Input Forex (Multi-Source)",
+                "Input ETF / Saham Gabungan",
+                "Input Saham Custom (yFinance)",
+                "Input Komoditas",
+                "Input Crypto (Multi-Exchange)",
                 "PT Bank Mandiri Tbk (Bank Mandiri)",
                 "PT Bank Rakyat Indonesia Tbk (BRI)",
                 "PT Bank Central Asia Tbk (BCA)",
@@ -4160,7 +5005,7 @@ if __name__ == "__main__":
             
         st.markdown('**Manual**')
         st.markdown('- **1. Pilih Tab Prediksi Saham:** Untuk Melakukan Forecasting')
-        st.markdown('- **2. Pilih Sumber Data & Simbol Aset:** yFinance (Harian), CoinMarketCap (Intraday API), atau Kraken (Intraday REST API)')
+        st.markdown('- **2. Pilih Kategori (Forex/ETF/Saham/Komoditas/Crypto) + Sumber (urut likuiditas) + Pasar (spot/futures/perpetual/option) + Timeframe (detik/menit/jam/hari, WIB)**')
         st.markdown('- **3. Scroll ke bawah halaman:** Untuk Memilih Periode Forecasting')
         st.markdown('- **4. Tekan Tombol Latih Model:** Untuk Melakukan Pelatihan Model Forecasting')
         st.markdown('- **5. Lihat Interpretasi dan Pelaporan Hasil:** Menampilkan Kesimpulan Prediksi')
@@ -4215,295 +5060,46 @@ if menu_type == "Informasi Umum":
         
 if menu_type == "Prediksi Saham":
     
-    if selected == "Input Saham Custom":
-        if 'custom_stock_input' not in st.session_state:
-            st.session_state.custom_stock_input = "BTC-USD"
+    if selected == "Input Forex (Multi-Source)":
+        render_unified_asset_page(
+            "forex",
+            "<h1 style='text-align: left; color: #0B6E4F;'>Input Forex (Multi-Source, termasuk yFinance)</h1>",
+            "<p style='text-align: justify; color: black;'>Pilih pasangan mata uang (contoh: EURUSD=X, USDIDR=X). Sumber publik prioritas likuid: yFinance &gt; Stooq &gt; Frankfurter &gt; Open ER-API. Timeframe forex umumnya per-Hari (WIB).</p>",
+            "1. **Format yFinance**: `EURUSD=X`, `USDIDR=X`, `USDJPY=X`.\n2. **Stooq fallback** otomatis jika yFinance gagal.\n3. Semua waktu dinormalisasi ke **WIB**.",
+            CATEGORY_PRESETS["forex"], "EURUSD=X", "fx", need_cmc_key=False)
 
-        st.markdown("<h1 style='text-align: left; color: #4A4A4A;'>Input Saham / Crypto Custom (yFinance)</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode saham atau crypto yang ingin Anda prediksi via yFinance (contoh: AAPL, GOOGL, BMRI.JK, BTC-USD, dll.)</p>", unsafe_allow_html=True)
-        st.info("💡 **Tips:** Silakan scroll ke bawah halaman untuk melakukan forecasting/prediksi setelah memilih atau memasukkan kode saham.")
-        
-        # Popular Indonesia Stock Buttons
-        st.write("**Pilihan Saham Indonesia Populer**")
-        ind_cols = st.columns(4)
-        with ind_cols[0]:
-            if st.button("BBCA.JK", key="btn_bbca"):
-                st.session_state.custom_stock_input = "BBCA.JK"
-                st.rerun()
-        with ind_cols[1]:
-            if st.button("BMRI.JK", key="btn_bmri"):
-                st.session_state.custom_stock_input = "BMRI.JK"
-                st.rerun()
-        with ind_cols[2]:
-            if st.button("BBNI.JK", key="btn_bbni"):
-                st.session_state.custom_stock_input = "BBNI.JK"
-                st.rerun()
-        with ind_cols[3]:
-            if st.button("BRIS.JK", key="btn_bris"):
-                st.session_state.custom_stock_input = "BRIS.JK"
-                st.rerun()
-        
-        # Popular Global Stock Buttons
-        st.write("**Pilihan Saham Global Populer**")
-        glob_cols1 = st.columns(4)
-        with glob_cols1[0]:
-            if st.button("AAPL", key="btn_aapl"):
-                st.session_state.custom_stock_input = "AAPL"
-                st.rerun()
-        with glob_cols1[1]:
-            if st.button("GOOGL", key="btn_googl"):
-                st.session_state.custom_stock_input = "GOOGL"
-                st.rerun()
-        with glob_cols1[2]:
-            if st.button("MSFT", key="btn_msft"):
-                st.session_state.custom_stock_input = "MSFT"
-                st.rerun()
-        with glob_cols1[3]:
-            if st.button("TSLA", key="btn_tsla"):
-                st.session_state.custom_stock_input = "TSLA"
-                st.rerun()
-        
-        glob_cols2 = st.columns(4)
-        with glob_cols2[0]:
-            if st.button("AMZN", key="btn_amzn"):
-                st.session_state.custom_stock_input = "AMZN"
-                st.rerun()
-        with glob_cols2[1]:
-            if st.button("NVDA", key="btn_nvda"):
-                st.session_state.custom_stock_input = "NVDA"
-                st.rerun()
-        with glob_cols2[2]:
-            if st.button("META", key="btn_meta"):
-                st.session_state.custom_stock_input = "META"
-                st.rerun()
-        with glob_cols2[3]:
-            if st.button("NFLX", key="btn_nflx"):
-                st.session_state.custom_stock_input = "NFLX"
-                st.rerun()
-        
-        # Popular Crypto Buttons
-        st.write("**Pilihan Crypto Populer (Global)**")
-        crypto_cols1 = st.columns(4)
-        with crypto_cols1[0]:
-            if st.button("BTC-USD", key="btn_btc"):
-                st.session_state.custom_stock_input = "BTC-USD"
-                st.rerun()
-        with crypto_cols1[1]:
-            if st.button("ETH-USD", key="btn_eth"):
-                st.session_state.custom_stock_input = "ETH-USD"
-                st.rerun()
-        with crypto_cols1[2]:
-            if st.button("SOL-USD", key="btn_sol"):
-                st.session_state.custom_stock_input = "SOL-USD"
-                st.rerun()
-        with crypto_cols1[3]:
-            if st.button("BNB-USD", key="btn_bnb"):
-                st.session_state.custom_stock_input = "BNB-USD"
-                st.rerun()
-        
-        crypto_cols2 = st.columns(4)
-        with crypto_cols2[0]:
-            if st.button("XRP-USD", key="btn_xrp"):
-                st.session_state.custom_stock_input = "XRP-USD"
-                st.rerun()
-        with crypto_cols2[1]:
-            if st.button("DOGE-USD", key="btn_doge"):
-                st.session_state.custom_stock_input = "DOGE-USD"
-                st.rerun()
-        with crypto_cols2[2]:
-            if st.button("ADA-USD", key="btn_ada"):
-                st.session_state.custom_stock_input = "ADA-USD"
-                st.rerun()
-        with crypto_cols2[3]:
-            if st.button("DOT-USD", key="btn_dot"):
-                st.session_state.custom_stock_input = "DOT-USD"
-                st.rerun()
-        
-        with st.expander("💡 Ketentuan & Tips Penulisan Ticker yFinance", expanded=False):
-            st.markdown("""
-            **Ketentuan Penulisan Ticker yFinance:**
-            1. **Saham Indonesia (IHSG)**: Tambahkan akhiran **`.JK`** (misalnya: `BBCA.JK`, `BMRI.JK`, `BBNI.JK`, `BRIS.JK`).
-            2. **Saham Global (AS/S&P 500)**: Kode ticker standar bursa AS (misalnya: `AAPL`, `GOOGL`, `MSFT`, `TSLA`).
-            3. **Cryptocurrency**: Gunakan kode koin diikuti akhiran **`-USD`** (misalnya: `BTC-USD`, `ETH-USD`, `SOL-USD`).
-            """)
-        
-        st.write("")
-        st.markdown("**Masukkan Kode Saham/Crypto**")
-        col_input, col_btn = st.columns([5, 1])
-        with col_input:
-            custom_stock = st.text_input(
-                "Masukkan Kode Saham", 
-                value=st.session_state.custom_stock_input, 
-                placeholder="Contoh: BMRI.JK", 
-                label_visibility="collapsed"
-            )
-        with col_btn:
-            st.button("Enter 🔍", type="primary", use_container_width=True)
-            
-        if custom_stock != st.session_state.custom_stock_input:
-            st.session_state.custom_stock_input = custom_stock
-        
-        if custom_stock:
-            st.cache_data.clear()
-            main(custom_stock, data_source="yfinance")
-        else:
-            st.warning("Silakan masukkan kode saham terlebih dahulu")
+    elif selected == "Input ETF / Saham Gabungan":
+        render_unified_asset_page(
+            "etf",
+            "<h1 style='text-align: left; color: #5C6BC0;'>Input ETF / Saham Gabungan (termasuk yFinance)</h1>",
+            "<p style='text-align: justify; color: black;'>Pilih ETF likuid global (contoh: SPY, QQQ, DIA, IWM). Sumber: yFinance &gt; Stooq. Timeframe per-Hari (WIB).</p>",
+            "1. **Ticker ETF AS**: `SPY`, `QQQ`, `DIA`, `IWM`, `EEM`, `VTI`.\n2. Data harian; acuan \u2018hari ini\u2019 = **data terakhir WIB**.",
+            CATEGORY_PRESETS["etf"], "SPY", "etf", need_cmc_key=False)
 
-    elif selected == "Input Crypto (CoinMarketCap)":
-        if 'cmc_crypto_input' not in st.session_state:
-            st.session_state.cmc_crypto_input = "BTC"
+    elif selected == "Input Saham Custom (yFinance)":
+        render_unified_asset_page(
+            "saham",
+            "<h1 style='text-align: left; color: #4A4A4A;'>Input Saham Custom (yFinance)</h1>",
+            "<p style='text-align: justify; color: black;'>Masukkan kode saham via <b>yFinance</b>/Stooq (contoh: BBCA.JK, BMRI.JK, AAPL, MSFT). Sumber: yFinance &gt; Stooq.</p>",
+            "1. **Saham Indonesia (IDX)**: akhiran **`.JK`** (misal `BBCA.JK`, `BMRI.JK`).\n2. **Saham AS**: ticker langsung (`AAPL`, `MSFT`, `NVDA`).\n3. Timeframe per-Hari (WIB).",
+            CATEGORY_PRESETS["saham"], "BBCA.JK", "stk", need_cmc_key=False)
 
-        st.markdown("<h1 style='text-align: left; color: #F7931A;'>Prediksi Crypto melalui CoinMarketCap</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode aset crypto dan API Key CoinMarketCap untuk analisis data frekuensi tinggi (Menit/Jam/Detik).</p>", unsafe_allow_html=True)
-        
-        default_cmc_key = get_cmc_api_key_from_env_or_secrets()
-        cmc_key_input = st.text_input("🔑 Masukkan CoinMarketCap API Key", value=default_cmc_key, type="password", placeholder="Masukkan API Key CoinMarketCap Anda (Opsional jika sudah ada di secrets)...")
-        if default_cmc_key:
-            st.caption("✅ API Key terdeteksi dari Secrets/Environment.")
-        
-        st.write("**Pilihan Kripto Populer (CoinMarketCap)**")
-        cmc_cols1 = st.columns(4)
-        with cmc_cols1[0]:
-            if st.button("BTC (Bitcoin)", key="cmc_btc"):
-                st.session_state.cmc_crypto_input = "BTC"
-                st.rerun()
-        with cmc_cols1[1]:
-            if st.button("ETH (Ethereum)", key="cmc_eth"):
-                st.session_state.cmc_crypto_input = "ETH"
-                st.rerun()
-        with cmc_cols1[2]:
-            if st.button("SOL (Solana)", key="cmc_sol"):
-                st.session_state.cmc_crypto_input = "SOL"
-                st.rerun()
-        with cmc_cols1[3]:
-            if st.button("BNB (Binance)", key="cmc_bnb"):
-                st.session_state.cmc_crypto_input = "BNB"
-                st.rerun()
-                
-        cmc_cols2 = st.columns(4)
-        with cmc_cols2[0]:
-            if st.button("XRP (Ripple)", key="cmc_xrp"):
-                st.session_state.cmc_crypto_input = "XRP"
-                st.rerun()
-        with cmc_cols2[1]:
-            if st.button("DOGE (Dogecoin)", key="cmc_doge"):
-                st.session_state.cmc_crypto_input = "DOGE"
-                st.rerun()
-        with cmc_cols2[2]:
-            if st.button("ADA (Cardano)", key="cmc_ada"):
-                st.session_state.cmc_crypto_input = "ADA"
-                st.rerun()
-        with cmc_cols2[3]:
-            if st.button("DOT (Polkadot)", key="cmc_dot"):
-                st.session_state.cmc_crypto_input = "DOT"
-                st.rerun()
-                
-        st.write("")
-        st.markdown("**Masukkan Simbol Kripto**")
-        col_c_in, col_c_btn = st.columns([5, 1])
-        with col_c_in:
-            cmc_symbol = st.text_input(
-                "Masukkan Simbol Kripto",
-                value=st.session_state.cmc_crypto_input,
-                placeholder="Contoh: BTC, ETH, DOGE, SOL",
-                label_visibility="collapsed"
-            )
-        with col_c_btn:
-            st.button("Enter 🚀", type="primary", use_container_width=True, key="btn_cmc_enter")
-            
-        if cmc_symbol != st.session_state.cmc_crypto_input:
-            st.session_state.cmc_crypto_input = cmc_symbol
-            
-        if cmc_symbol:
-            st.cache_data.clear()
-            main(cmc_symbol, data_source="coinmarketcap", api_key=cmc_key_input)
-        else:
-            st.warning("Silakan masukkan simbol crypto terlebih dahulu")
+    elif selected == "Input Komoditas":
+        render_unified_asset_page(
+            "komoditas",
+            "<h1 style='text-align: left; color: #8D6E00;'>Input Komoditas (termasuk yFinance)</h1>",
+            "<p style='text-align: justify; color: black;'>Pilih komoditas likuid (contoh: GC=F emas, CL=F minyak WTI, SI=F perak). Sumber: yFinance &gt; Stooq. Timeframe per-Hari (WIB).</p>",
+            "1. **Format futures yFinance**: `GC=F` (emas), `SI=F` (perak), `CL=F` (WTI), `BZ=F` (Brent), `NG=F` (gas).",
+            CATEGORY_PRESETS["komoditas"], "GC=F", "cmd", need_cmc_key=False)
 
-    elif selected == "Input Crypto (Kraken API)":
-        if 'kraken_crypto_input' not in st.session_state:
-            st.session_state.kraken_crypto_input = "BTC"
+    elif selected == "Input Crypto (Multi-Exchange)":
+        render_unified_asset_page(
+            "crypto",
+            "<h1 style='text-align: left; color: #F7931A;'>Input Crypto (Multi-Exchange: Binance/Bybit/OKX/dll. + CoinMarketCap + Kraken + yFinance-Crypto)</h1>",
+            "<p style='text-align: justify; color: black;'>Halaman crypto disatukan: <b>CoinMarketCap + Kraken + crypto-yFinance + exchange publik likuid</b> (Binance, Bybit, OKX, Coinbase, Bitget, Gate.io, KuCoin, MEXC, Crypto.com, Bitfinex, Upbit, Bithumb, BitMart). Pilih sumber (urut likuiditas), lalu tombol <b>Pasar</b> (spot/futures/perpetual/option) &amp; <b>Timeframe</b> (detik/menit/jam/hari, WIB) sesudah Enter. API key hanya diminta jika publik gagal (terutama CoinMarketCap).</p>",
+            "1. **Simbol**: kode koin langsung (`BTC`, `ETH`, `SOL`).\n2. **Deteksi granularitas** otomatis (per-detik/menit/jam/hari) tampil setelah Enter.\n3. **Binance mendukung 1s** (per-detik); exchange lain mulai 1m.\n4. Semua chart & forecasting mengikuti timeframe + WIB.",
+            CATEGORY_PRESETS["crypto"], "BTC", "cry", need_cmc_key=True)
 
-        st.markdown("<h1 style='text-align: left; color: #5841D8;'>Prediksi Crypto melalui Kraken REST API</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: justify; color: black;'>Masukkan kode aset crypto dan API Key Kraken (Opsional untuk data pasar publik) untuk analisis data frekuensi tinggi (Menit/Jam/Harian) langsung dari bursa Kraken.</p>", unsafe_allow_html=True)
-        
-        default_kraken_key = get_kraken_api_key_from_env_or_secrets()
-        kraken_key_input = st.text_input("🔑 Masukkan Kraken API Key", value=default_kraken_key, type="password", placeholder="Masukkan API Key Kraken Anda (Opsional untuk public market data)...")
-        if default_kraken_key:
-            st.caption("✅ Kraken API Key terdeteksi dari Secrets / Environment.")
-        
-        with st.expander("🛡️ Panduan Pengaturan Izin (Permissions) Kraken API Key yang Aman", expanded=False):
-            st.markdown("""
-            **Rekomendasi Konfigurasi Izin API Key di Kraken:**
-            Untuk keperluan membaca data pasar (*Market Data Reading*):
-            - ✅ **Funds permissions**: **KOSONGKAN SEMUA** (*Query / Deposit / Withdraw TIDAK DIBUTUHKAN*).
-            - ❌ **Withdraw / Add withdrawal addresses**: **OFF / JANGAN DICENTANG** *(Demi menjaga keamanan saldo aset Anda)*.
-            - ✅ **Orders and trades**: **KOSONGKAN / OFF** (*Tidak perlu izin trading atau cancel order*).
-            - ✅ **Data permissions**: Boleh centang **`Export data`** atau **`Query ledger entries`** (atau kosongkan untuk mode Public REST).
-            - ✅ **WebSocket interface**: **ON / OFF** (Bebas).
-            - 💡 *Catatan:* Data harga candlestick Kraken adalah data publik, sehingga tanpa API Key pun data tetap dapat diakses dengan cepat.
-            """)
-
-        st.write("**Pilihan Kripto Populer (Kraken API)**")
-        k_cols1 = st.columns(4)
-        with k_cols1[0]:
-            if st.button("BTC (Bitcoin)", key="k_btc"):
-                st.session_state.kraken_crypto_input = "BTC"
-                st.rerun()
-        with k_cols1[1]:
-            if st.button("ETH (Ethereum)", key="k_eth"):
-                st.session_state.kraken_crypto_input = "ETH"
-                st.rerun()
-        with k_cols1[2]:
-            if st.button("SOL (Solana)", key="k_sol"):
-                st.session_state.kraken_crypto_input = "SOL"
-                st.rerun()
-        with k_cols1[3]:
-            if st.button("BNB (Binance)", key="k_bnb"):
-                st.session_state.kraken_crypto_input = "BNB"
-                st.rerun()
-                
-        k_cols2 = st.columns(4)
-        with k_cols2[0]:
-            if st.button("XRP (Ripple)", key="k_xrp"):
-                st.session_state.kraken_crypto_input = "XRP"
-                st.rerun()
-        with k_cols2[1]:
-            if st.button("DOGE (Dogecoin)", key="k_doge"):
-                st.session_state.kraken_crypto_input = "DOGE"
-                st.rerun()
-        with k_cols2[2]:
-            if st.button("ADA (Cardano)", key="k_ada"):
-                st.session_state.kraken_crypto_input = "ADA"
-                st.rerun()
-        with k_cols2[3]:
-            if st.button("DOT (Polkadot)", key="k_dot"):
-                st.session_state.kraken_crypto_input = "DOT"
-                st.rerun()
-                
-        st.write("")
-        st.markdown("**Masukkan Simbol Kripto (Kraken)**")
-        col_k_in, col_k_btn = st.columns([5, 1])
-        with col_k_in:
-            kraken_symbol = st.text_input(
-                "Masukkan Simbol Kripto",
-                value=st.session_state.kraken_crypto_input,
-                placeholder="Contoh: BTC, ETH, DOGE, SOL, XRP, ADA",
-                label_visibility="collapsed",
-                key="kraken_sym_in"
-            )
-        with col_k_btn:
-            st.button("Enter 🚀", type="primary", use_container_width=True, key="btn_kraken_enter")
-            
-        if kraken_symbol != st.session_state.kraken_crypto_input:
-            st.session_state.kraken_crypto_input = kraken_symbol
-            
-        if kraken_symbol:
-            st.cache_data.clear()
-            main(kraken_symbol, data_source="kraken", api_key=kraken_key_input)
-        else:
-            st.warning("Silakan masukkan simbol crypto terlebih dahulu")
-    
     elif selected == "PT Bank Mandiri Tbk (Bank Mandiri)":
         image = Image.open('./LOGO/BMRI.png')
         st.image(image, caption=None, width=500, clamp=False, channels="RGB", output_format="auto")
@@ -4518,7 +5114,7 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Ekosistem digital melalui Livin by Mandiri')
         
         st.cache_data.clear()
-        main("BMRI.JK", data_source="yfinance")
+        main("BMRI.JK", data_source="yfinance", timeframe="1D", market_type="spot", category="saham")
 
     elif selected == "PT Bank Rakyat Indonesia Tbk (BRI)":
         image = Image.open('./LOGO/BBRI.png')
@@ -4534,7 +5130,7 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Layanan perbankan digital seperti BRImo')
         
         st.cache_data.clear()
-        main("BBRI.JK", data_source="yfinance")
+        main("BBRI.JK", data_source="yfinance", timeframe="1D", market_type="spot", category="saham")
 
     elif selected == "PT Bank Central Asia Tbk (BCA)":
         image = Image.open('./LOGO/BBCA.png')
@@ -4550,7 +5146,7 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Dikenal dengan:** Layanan perbankan digital seperti m-BCA dan KlikBCA')
         
         st.cache_data.clear()
-        main("BBCA.JK", data_source="yfinance")  
+        main("BBCA.JK", data_source="yfinance", timeframe="1D", market_type="spot", category="saham")  
 
     elif selected == "PT Bank Negara Indonesia Tbk (BNI)":
         image = Image.open('./LOGO/BBNI.png')
@@ -4566,7 +5162,7 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Layanan digital seperti BNI Mobile Banking')
         
         st.cache_data.clear()
-        main("BBNI.JK", data_source="yfinance")
+        main("BBNI.JK", data_source="yfinance", timeframe="1D", market_type="spot", category="saham")
 
     elif selected == "PT Bank Syariah Indonesia Tbk (BSI)":
         image = Image.open('./LOGO/BRIS.png')
@@ -4582,4 +5178,4 @@ if menu_type == "Prediksi Saham":
         st.markdown('- **Mengembangkan:** Ekosistem keuangan syariah digital')
         
         st.cache_data.clear()
-        main("BRIS.JK", data_source="yfinance")
+        main("BRIS.JK", data_source="yfinance", timeframe="1D", market_type="spot", category="saham")
