@@ -1945,7 +1945,7 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
         pass
     return fig
 
-def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix="", timeframe="1D"):
+def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix="", timeframe="1D", fut_actual_dates=None, fut_actual_prices=None):
     fig = go.Figure()
     today_dt = pd.to_datetime(date.today())
     if hasattr(today_dt, 'tz') and today_dt.tz is not None:
@@ -2220,6 +2220,46 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             hovertext=hover_proj,
             showlegend=True
         ))
+
+    # --- B2. HARGA AKTUAL MASA MENDATANG (data API di luar jendela pelatihan, oranye) ---
+    if fut_actual_dates is not None and fut_actual_prices is not None:
+        try:
+            fa_dates = pd.to_datetime(fut_actual_dates)
+            if hasattr(fa_dates, 'tz') and fa_dates.tz is not None:
+                fa_dates = fa_dates.tz_localize(None)
+            fa_prices = extract_1d_array(fut_actual_prices)
+            n_fa = min(len(fa_dates), len(fa_prices))
+            if n_fa >= 1:
+                fa_dates = fa_dates[:n_fa]
+                fa_prices = fa_prices[:n_fa]
+                base_fa = fa_prices[0] if fa_prices[0] > 0 else 1.0
+                hover_fa = []
+                for i in range(n_fa):
+                    d_str = format_timestamp_for_plot(fa_dates[i])
+                    p_str = smart_format(fa_prices[i], prefix=curr_prefix)
+                    ret_val = fa_prices[i] - base_fa
+                    ret_pct = (ret_val / base_fa) * 100.0 if base_fa > 0 else 0.0
+                    ret_sign = "+" if ret_val > 0 else ("-" if ret_val < 0 else "")
+                    ret_arrow = "▲" if ret_val >= 0 else "▼"
+                    ret_color = "#00C853" if ret_val >= 0 else "#D50000"
+                    ret_diff_str = smart_format(abs(ret_val), prefix=curr_prefix)
+                    hover_fa.append(
+                        f"<b>Tanggal:</b> {d_str}<br>"
+                        f"<b>Harga Aktual Masa Mendatang:</b> {p_str}<br>"
+                        f"<b>Perubahan dari Awal Jendela:</b> <span style='color:{ret_color};'>{ret_arrow} {ret_sign}{abs(ret_pct):.2f}% ({ret_sign}{ret_diff_str})</span>"
+                    )
+                fig.add_trace(go.Scatter(
+                    x=fa_dates,
+                    y=fa_prices,
+                    mode='lines+markers',
+                    name='Harga Aktual Masa Mendatang (API)',
+                    line=dict(color='#FF6D00', width=2.6),
+                    marker=dict(size=6, color='#FF6D00'),
+                    hoverinfo='text',
+                    hovertext=hover_fa
+                ))
+        except Exception:
+            pass
 
     # --- C. PENANDA HIGH & LOW PADA CHART (Deduplicated Text Markers) ---
     # 1. High Aktual
@@ -4668,6 +4708,31 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
 
             with st.spinner('Sedang Melakukan prediksi dan perhitungan metrik... Harap tunggu.'):
 
+                with st.expander("Apa yang dibandingkan setiap metrik? (Referensi kebenaran)", expanded=False):
+                    st.markdown("""
+                    - **Metrik Horizon** (Akurasi/R2/MAPE/RMSE/MAE/MSE) di tiap periode memakai jendela **data uji**: **Harga Aktual (gold)** vs **Harga Pengujian/Prediksi Uji (ungu)** pada N langkah awal data uji.
+                    - **Harga Prediksi Model (biru)** adalah output mentah network dalam skala basis uji — tidak dibandingkan langsung ke harga pasar.
+                    - **Proyeksi Tren Aktual (hijau/merah)** = persentase perubahan model yang ditempelkan ke **harga aktual terakhir**, sehingga terskala ke harga pasar riil.
+                    - **Metrik Proyeksi vs Aktual Masa Mendatang (baru)**: **Proyeksi Tren Aktual** vs **Harga Aktual Masa Mendatang (oranye)** — yaitu data API asli **di luar jendela pelatihan** (melewati titik akhir yang dipilih). Inilah koreksi kebenaran masa depan.
+                    """)
+                try:
+                    _train_end_dt = data.index[-1]
+                    _fut_full = full_data[full_data.index > _train_end_dt].copy() if (full_data is not None and not full_data.empty) else pd.DataFrame()
+                except Exception:
+                    _fut_full = pd.DataFrame()
+                try:
+                    _n_fut_avail = len(_fut_full)
+                except Exception:
+                    _n_fut_avail = 0
+                if _n_fut_avail > 0:
+                    try:
+                        st.caption(f"Data aktual melewati titik akhir pelatihan tersedia: **{_n_fut_avail}** titik (s/d `{format_timestamp_for_plot(_fut_full.index[-1])}`). Garis oranye = harga API asli masa mendatang.")
+                    except Exception:
+                        pass
+                else:
+                    st.info("Pelatihan memakai data hingga titik terakhir yang tersedia, sehingga belum ada data aktual masa mendatang. Untuk mengaktifkan garis oranye + metrik proyeksi-vs-aktual, mundurkan **Titik Akhir** di Pengumpulan Data.", icon=":material/info:")
+
+
                 for i, forecast_period in enumerate(selected_periods):
 
                     forecast_days = forecast_options_dict[forecast_period]
@@ -4695,6 +4760,13 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                     else:
                         date_range = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days)
 
+                    try:
+                        _af_slice = _fut_full.iloc[:forecast_days] if (_fut_full is not None and not _fut_full.empty) else pd.DataFrame()
+                        _af_dates = _af_slice.index if not _af_slice.empty else []
+                        _af_prices = extract_1d_array(_af_slice['Close'] if (not _af_slice.empty and 'Close' in _af_slice.columns) else [])
+                    except Exception:
+                        _af_dates, _af_prices = [], np.array([], dtype=float)
+
                     st.subheader(f"Prediksi untuk {forecast_period}:")
 
                     start_idx = max(-len(data), -(forecast_days * 3))
@@ -4708,7 +4780,9 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                         forecast=forecast,
                         y_label=f'Harga {asset_type}',
                         curr_prefix=curr_prefix,
-                        timeframe=timeframe
+                        timeframe=timeframe,
+                        fut_actual_dates=_af_dates,
+                        fut_actual_prices=_af_prices
                     )
                     if fig_fc is not None:
                         render_plotly_with_tools(fig_fc, key=f"fig_forecast_{forecast_period}_{i}")
@@ -4727,6 +4801,12 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                     last_proj_price = last_actual_price * (1.0 + (pct_model_change / 100.0))
                     pct_proj_change = ((last_proj_price - last_actual_price) / last_actual_price) * 100.0 if last_actual_price > 0 else 0.0
                     percent_change = pct_proj_change
+                    try:
+                        _fc_flat = extract_1d_array(forecast)
+                        _base_ref_m = last_test_price if (last_test_price is not None and last_test_price > 0) else (float(_fc_flat[0]) if len(_fc_flat) > 0 else 1.0)
+                        _proj_arr = last_actual_price * (1.0 + (_fc_flat - _base_ref_m) / _base_ref_m) if _base_ref_m > 0 else _fc_flat
+                    except Exception:
+                        _proj_arr = extract_1d_array(forecast)
 
                     if len(y_test) >= forecast_days:
 
@@ -4802,6 +4882,57 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                             st.warning(f"▼ {sub_lbl} (Skor Akumulasi: {comp_sub:.1f} / 100)", icon=":material/thumb_down:")
                         else:
                             st.error(f"▼ {sub_lbl}", icon=":material/thumb_down:")
+
+                        st.subheader("Metrik Proyeksi vs Aktual Masa Mendatang:")
+                        if len(_af_prices) >= 2:
+                            _n_af = min(len(_af_prices), len(_proj_arr))
+                            perf_fut = evaluate_model_performance(_af_prices[:_n_af], _proj_arr[:_n_af]) or {}
+
+                            f_col1, f_col2, f_col3 = st.columns(3)
+                            with f_col1:
+                                render_colored_metric_card("Akurasi Proyeksi", f"{perf_fut.get('accuracy', 0):.3f}%", perf_fut.get('cat_acc', 'neutral'), f"Proyeksi vs aktual ({forecast_period})")
+                            with f_col2:
+                                _r2f = perf_fut.get('r2')
+                                render_colored_metric_card("R2 Score", f"{_r2f:.3f}" if _r2f is not None else "-", perf_fut.get('cat_r2', 'neutral'), "Koefisien determinasi")
+                            with f_col3:
+                                render_colored_metric_card("MAPE", f"{perf_fut.get('mape', 0):.3f}", perf_fut.get('cat_mape', 'neutral'), "Mean Abs Percentage Err")
+
+                            f_col4, f_col5, f_col6 = st.columns(3)
+                            with f_col4:
+                                render_colored_metric_card("RMSE", smart_format(perf_fut.get('rmse', 0), default_decimals=3), perf_fut.get('cat_rmse', 'neutral'), "Root Mean Sq Err")
+                            with f_col5:
+                                render_colored_metric_card("MAE", smart_format(perf_fut.get('mae', 0), default_decimals=3), perf_fut.get('cat_mae', 'neutral'), "Mean Absolute Error")
+                            with f_col6:
+                                render_colored_metric_card("MSE", smart_format(perf_fut.get('mse', 0), default_decimals=3), perf_fut.get('cat_mse', 'neutral'), "Mean Squared Error")
+
+                            _comp_f = perf_fut.get('composite_score', 0)
+                            _lbl_f = perf_fut.get('label', 'Performa')
+                            _stat_f = perf_fut.get('status', 'info')
+                            if _stat_f == 'success':
+                                st.success(f"▲ {_lbl_f} (Skor Akumulasi: {_comp_f:.1f} / 100)", icon=":material/thumb_up:")
+                            elif _stat_f == 'info':
+                                st.info(f"▲ {_lbl_f} (Skor Akumulasi: {_comp_f:.1f} / 100)", icon=":material/thumb_up:")
+                            elif _stat_f == 'warning':
+                                st.warning(f"▼ {_lbl_f} (Skor Akumulasi: {_comp_f:.1f} / 100)", icon=":material/thumb_down:")
+                            else:
+                                st.error(f"▼ {_lbl_f}", icon=":material/thumb_down:")
+
+                            with st.popover("Tampilkan Tabel Aktual vs Proyeksi"):
+                                _ftab = pd.DataFrame({
+                                    'Tanggal': [format_timestamp_for_plot(d) for d in list(_af_dates)[:_n_af]],
+                                    'Harga Aktual Masa Mendatang': [smart_format(v, prefix=curr_prefix) for v in _af_prices[:_n_af].flatten()],
+                                    'Proyeksi Tren Aktual': [smart_format(v, prefix=curr_prefix) for v in np.asarray(_proj_arr).flatten()[:_n_af]]
+                                })
+                                st.dataframe(_ftab, use_container_width=True)
+                                st.download_button(
+                                    label="📥 Unduh Tabel Aktual vs Proyeksi sebagai CSV",
+                                    data=_ftab.to_csv(index=False).encode('utf-8'),
+                                    file_name=f"aktual_vs_proyeksi_{stock}_{forecast_period}.csv",
+                                    mime="text/csv",
+                                    key=f"btn_dl_fut_{forecast_period}_{i}"
+                                )
+                        else:
+                            st.info("Metrik proyeksi-vs-aktual membutuhkan minimal 2 titik data API melewati titik akhir pelatihan. Mundurkan **Titik Akhir** di Pengumpulan Data untuk mengaktifkannya.", icon=":material/info:")
 
                     else:
                         st.warning(f"Data tidak cukup untuk periode {forecast_period}, silahkan atur kembali rentang waktu pelatihan pada 'Pengumpulan data'.", icon=":material/exclamation:")
