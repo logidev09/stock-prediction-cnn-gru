@@ -4991,7 +4991,7 @@ if __name__ == "__main__":
                     "PT Bank Negara Indonesia Tbk (BNI)",
                     "PT Bank Syariah Indonesia Tbk (BSI)"
                 ],
-                icons=["currency-exchange", "grid", "search", "barrel", "currency-bitcoin", "bank", "bank", "bank", "bank", "bank"],
+                icons=["currency-exchange", "grid", "search", "gem", "currency-bitcoin", "bank", "bank", "bank", "bank", "bank"],
                 default_index=st.session_state.selected_index_pred,
                 manual_select=manual_select_pred,
                 orientation="vertikal"
