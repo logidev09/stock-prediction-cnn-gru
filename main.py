@@ -4008,6 +4008,24 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                 actual_days = 0
                 duration_str = "-"
 
+        st.markdown("**Cadangan Validasi Masa Mendatang (otomatis):**")
+        _max_reserve = max(0, len(data) - 30) if (data is not None and not data.empty) else 0
+        _suggest = min(120, max(0, len(data) - 120)) if (data is not None and len(data) > 150) else 0
+        reserve_n = st.number_input("Sisakan N titik terakhir sebagai Aktual Masa Mendatang / garis oranye (0 = nonaktif):", min_value=0, max_value=_max_reserve, value=min(_suggest, _max_reserve), step=1, key=f"reserve_n_{data_source}")
+        if reserve_n > 0 and data is not None and not data.empty and len(data) > 30:
+            data = data.iloc[:-int(reserve_n)].copy()
+            st.caption(f"Dilatih tanpa {int(reserve_n)} titik terakhir — titik tersebut menjadi acuan garis oranye + metrik masa mendatang.")
+            if not data.empty and len(data) >= 2:
+                duration_str = format_duration_human_readable(data.index[0], data.index[-1])
+                try:
+                    actual_days = (pd.to_datetime(data.index[-1]) - pd.to_datetime(data.index[0])).days
+                except Exception:
+                    actual_days = 0
+                try:
+                    days = max(0, int((pd.to_datetime(data.index[-1]) - pd.to_datetime(data.index[0])).days))
+                except Exception:
+                    pass
+
         st.subheader("Data Pelatihan yang telah dipilih")
         if is_intraday:
             st.write(f"Rentang Waktu Terpilih: **{duration_str}** ({len(data)} baris data).")
