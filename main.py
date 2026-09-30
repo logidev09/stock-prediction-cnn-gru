@@ -184,11 +184,14 @@ def render_plotly_with_tools(fig, key=None):
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CHART_CONFIG, key=key)
 
 def format_timestamp_for_plot(dt):
+    """Label waktu adaptif WIB: harian -> tanggal saja; beda jam/menit -> +HH:MM; beda detik -> +HH:MM:SS."""
     try:
         dt_p = pd.to_datetime(dt)
-        if dt_p.hour != 0 or dt_p.minute != 0 or dt_p.second != 0:
+        if dt_p.hour == 0 and dt_p.minute == 0 and dt_p.second == 0:
+            return dt_p.strftime('%Y-%m-%d')
+        if dt_p.second != 0:
             return dt_p.strftime('%Y-%m-%d %H:%M:%S')
-        return dt_p.strftime('%Y-%m-%d')
+        return dt_p.strftime('%Y-%m-%d %H:%M')
     except Exception:
         return str(dt)
 
@@ -574,15 +577,23 @@ def wib_tickformat(tf):
     return "%d %b %Y"
 
 def apply_wib_xaxis(fig, tf, rows_cols=None):
-    """Terapkan judul + format tick WIB adaptif ke semua xaxis Plotly."""
+    """Judul + tick WIB adaptif. tickformatstops: label berubah ikut zoom (tanggal->jam->menit/detik)."""
     try:
         fmt = wib_tickformat(tf)
         title = wib_axis_title(tf)
+        stops = [
+            dict(dtickrange=[None, 1000], value="%H:%M:%S"),
+            dict(dtickrange=[1000, 60000], value="%H:%M:%S"),
+            dict(dtickrange=[60000, 3600000], value="%H:%M"),
+            dict(dtickrange=[3600000, 86400000], value="%H:%M\n%d %b"),
+            dict(dtickrange=[86400000, 604800000], value="%d %b\n%Y"),
+            dict(dtickrange=[604800000, None], value="%d %b %Y"),
+        ]
         if rows_cols:
             for r, c in rows_cols:
-                fig.update_xaxes(title_text=title, tickformat=fmt, tickangle=-20, row=r, col=c)
+                fig.update_xaxes(title_text=title, tickformat=fmt, tickformatstops=stops, tickangle=-20, row=r, col=c)
         else:
-            fig.update_xaxes(title_text=title, tickformat=fmt, tickangle=-20)
+            fig.update_xaxes(title_text=title, tickformat=fmt, tickformatstops=stops, tickangle=-20)
     except Exception:
         pass
     return fig
@@ -1743,7 +1754,7 @@ def plot_interactive_history(df, title, y_label, line_color, curr_prefix="", tim
         
         hover_text = []
         for i in range(n):
-            d_str = dates[i].strftime('%Y-%m-%d')
+            d_str = format_timestamp_for_plot(dates[i])
             c_str = smart_format(close_vals[i], prefix=curr_prefix)
             o_str = smart_format(open_vals[i], prefix=curr_prefix) if i < len(open_vals) else "-"
             h_str = smart_format(high_vals[i], prefix=curr_prefix) if i < len(high_vals) else "-"
@@ -1840,7 +1851,7 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
 
     hover_actual = []
     for i in range(n):
-        d_str = dates[i].strftime('%Y-%m-%d')
+        d_str = format_timestamp_for_plot(dates[i])
         p_str = smart_format(y_t[i], prefix=curr_prefix)
         ret_val = y_t[i] - base_act_eval
         ret_pct = (ret_val / base_act_eval) * 100.0 if base_act_eval > 0 else 0.0
@@ -1864,7 +1875,7 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
 
     hover_pred = []
     for i in range(n):
-        d_str = dates[i].strftime('%Y-%m-%d')
+        d_str = format_timestamp_for_plot(dates[i])
         p_str = smart_format(y_p[i], prefix=curr_prefix)
         ret_val = y_p[i] - base_pred_eval
         ret_pct = (ret_val / base_pred_eval) * 100.0 if base_pred_eval > 0 else 0.0
@@ -4052,116 +4063,126 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
         if fig_train is not None:
             render_plotly_with_tools(fig_train, key="fig_train_data_history")
 
-        with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
-            fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
-            if fig_train_comp is not None:
-                render_plotly_with_tools(fig_train_comp, key="fig_train_data_comp_indicators")
+        _build_traincomp = st.radio("Buat grafik komprehensif Data Pelatihan (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_traincomp_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
 
+        with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
+            if _build_traincomp:
+                fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
+                if fig_train_comp is not None:
+                    render_plotly_with_tools(fig_train_comp, key="fig_train_data_comp_indicators")
+
+            else:
+                st.caption("Grafik dilewati agar pemuatan cepat. Pilih Ya, buat & tampilkan di atas untuk membuatnya.")
         # Toggle Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta
         _mini_defs = build_mini_periods_for_tf(timeframe)
         _mini_lbl = ", ".join([_l for _l, _ in _mini_defs])
         expander_title = f"📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume ({_mini_lbl}) — WIB, acuan Data Terakhir"
+        _build_mini = st.radio("Buat grafik mini tren (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_mini_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
+
         with st.expander(expander_title, expanded=False):
-            if not data.empty:
-                try:
-                    _last_mini_wib = fmt_wib(data.index[-1])
-                except Exception:
-                    _last_mini_wib = "-"
-                st.caption(f"Acuan \u2018hari ini\u2019 = **Data Terakhir WIB ({_last_mini_wib})**. Timeframe aktif: **{TIMEFRAME_LABEL_ID.get(str(timeframe), timeframe)}**. YTD = 1 Jan s/d Terakhir; 1Y/1 Thn = 365 hari ke belakang.")
-                period_slices = []
-                for _lbl, _span in _mini_defs:
+            if _build_mini:
+                if not data.empty:
                     try:
-                        if isinstance(_span, str) and _span == "YTD":
-                            _sdf = ytd_slice(data)
-                            if _sdf.empty or len(_sdf) < 2:
-                                period_slices.append((_lbl, pd.DataFrame(), None))
-                            else:
-                                _c0 = safe_float(_sdf['Close'].iloc[0]); _c1 = safe_float(_sdf['Close'].iloc[-1])
-                                _ch = ((_c1 - _c0) / _c0 * 100.0) if _c0 > 0 else None
-                                period_slices.append((_lbl, _sdf, _ch))
-                        elif is_intraday:
-                            period_slices.append((_lbl, get_time_period_slice(data, _span), get_time_change_pct(data, _span)))
-                        else:
-                            _days = max(1, int(_span.total_seconds() // 86400))
-                            period_slices.append((_lbl, get_period_slice(data, _days), get_change_pct(data, _days)))
+                        _last_mini_wib = fmt_wib(data.index[-1])
                     except Exception:
-                        period_slices.append((_lbl, pd.DataFrame(), None))
+                        _last_mini_wib = "-"
+                    st.caption(f"Acuan \u2018hari ini\u2019 = **Data Terakhir WIB ({_last_mini_wib})**. Timeframe aktif: **{TIMEFRAME_LABEL_ID.get(str(timeframe), timeframe)}**. YTD = 1 Jan s/d Terakhir; 1Y/1 Thn = 365 hari ke belakang.")
+                    period_slices = []
+                    for _lbl, _span in _mini_defs:
+                        try:
+                            if isinstance(_span, str) and _span == "YTD":
+                                _sdf = ytd_slice(data)
+                                if _sdf.empty or len(_sdf) < 2:
+                                    period_slices.append((_lbl, pd.DataFrame(), None))
+                                else:
+                                    _c0 = safe_float(_sdf['Close'].iloc[0]); _c1 = safe_float(_sdf['Close'].iloc[-1])
+                                    _ch = ((_c1 - _c0) / _c0 * 100.0) if _c0 > 0 else None
+                                    period_slices.append((_lbl, _sdf, _ch))
+                            elif is_intraday:
+                                period_slices.append((_lbl, get_time_period_slice(data, _span), get_time_change_pct(data, _span)))
+                            else:
+                                _days = max(1, int(_span.total_seconds() // 86400))
+                                period_slices.append((_lbl, get_period_slice(data, _days), get_change_pct(data, _days)))
+                        except Exception:
+                            period_slices.append((_lbl, pd.DataFrame(), None))
                 
-                # 1. Baris Chart Harga (Garis Close Tanpa VWAP)
-                st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Garis Hijau: Tren Naik / Garis Merah: Tren Turun):**")
-                cols_price = st.columns(min(len(period_slices), 5))
-                for idx, (label, s_df, chg) in enumerate(period_slices):
-                    col = cols_price[idx % 5]
-                    with col:
-                        if chg is not None and not s_df.empty and len(s_df) >= 2:
-                            c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
-                            mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
-                            mean_c_str = smart_format(mean_c, prefix=curr_prefix)
-                            badge_sign = f":green[▲ +{chg:.2f}%]" if chg >= 0 else f":red[▼ {chg:.2f}%]"
-                            st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
-                            is_pos = (chg >= 0)
-                            fig = render_sparkline_chart(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0], is_positive=is_pos, chart_type='line', fill=True)
-                            st.pyplot(fig)
-                            plt.close(fig)
-                        else:
-                            st.markdown(f"<small><b>{label}</b> (-)<br>Rata2: <code>-</code></small>", unsafe_allow_html=True)
-                            st.write("-")
-                            
-                # 2. Baris Chart Volume Transaksi Disatukan dengan Garis ATR (Kuning)
-                st.markdown(f"**2. Grafik Mini Volume Transaksi & ATR (Bar Hijau/Merah: Volume, Garis Kuning: ATR Volatilitas):**")
-                cols_vol_atr = st.columns(min(len(period_slices), 5))
-                for idx, (label, s_df, chg) in enumerate(period_slices):
-                    col = cols_vol_atr[idx % 5]
-                    with col:
-                        if chg is not None and not s_df.empty and len(s_df) >= 2:
-                            vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
-                            if len(vol_arr) >= 2 and vol_arr[0] > 0:
-                                v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
-                                v_badge = f":green[▲ +{v_chg:.1f}%]" if v_chg >= 0 else f":red[▼ {v_chg:.1f}%]"
-                            else:
-                                v_badge = "-"
-                            
-                            atr_arr = calculate_atr_series(s_df)
-                            latest_atr_str = smart_format(atr_arr[-1], prefix=curr_prefix) if len(atr_arr) > 0 else "-"
-                            
-                            st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
-                            if not s_df.empty and 'Volume' in s_df.columns:
-                                bar_cols = get_bar_colors_for_volume(s_df)
-                                fig = render_combined_volume_atr_sparkline(s_df['Volume'], atr_arr, bar_colors=bar_cols)
+                    # 1. Baris Chart Harga (Garis Close Tanpa VWAP)
+                    st.markdown(f"**1. Grafik Mini Tren Harga {asset_type} (Garis Hijau: Tren Naik / Garis Merah: Tren Turun):**")
+                    cols_price = st.columns(min(len(period_slices), 5))
+                    for idx, (label, s_df, chg) in enumerate(period_slices):
+                        col = cols_price[idx % 5]
+                        with col:
+                            if chg is not None and not s_df.empty and len(s_df) >= 2:
+                                c_arr = extract_1d_array(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0])
+                                mean_c = np.mean(c_arr) if len(c_arr) > 0 else 0.0
+                                mean_c_str = smart_format(mean_c, prefix=curr_prefix)
+                                badge_sign = f":green[▲ +{chg:.2f}%]" if chg >= 0 else f":red[▼ {chg:.2f}%]"
+                                st.markdown(f"<small><b>{label}</b> ({badge_sign})<br>Rata2: <code>{mean_c_str}</code></small>", unsafe_allow_html=True)
+                                is_pos = (chg >= 0)
+                                fig = render_sparkline_chart(s_df['Close'] if 'Close' in s_df.columns else s_df.iloc[:, 0], is_positive=is_pos, chart_type='line', fill=True)
                                 st.pyplot(fig)
                                 plt.close(fig)
                             else:
+                                st.markdown(f"<small><b>{label}</b> (-)<br>Rata2: <code>-</code></small>", unsafe_allow_html=True)
                                 st.write("-")
-                        else:
-                            st.markdown(f"<small><b>Vol {label}</b> (-)<br>ATR: -</small>", unsafe_allow_html=True)
-                            st.write("-")
-
-                # 3. Baris Chart Delta Volume Harian (Bar Hijau Net Buy & Merah Net Sell)
-                st.markdown(f"**3. Grafik Mini Delta Volume (Bar Hijau: Net Buy, Bar Merah: Net Sell):**")
-                cols_delta = st.columns(min(len(period_slices), 5))
-                for idx, (label, s_df, chg) in enumerate(period_slices):
-                    col = cols_delta[idx % 5]
-                    with col:
-                        if chg is not None and not s_df.empty and len(s_df) >= 2:
-                            daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
-                            if len(daily_delta) > 0:
-                                net_delta = np.sum(daily_delta)
-                                d_pos = net_delta >= 0
-                                d_badge = f":green[▲ +{format_market_cap(net_delta)} Net Buy]" if d_pos else f":red[▼ -{format_market_cap(abs(net_delta))} Net Sell]"
+                            
+                    # 2. Baris Chart Volume Transaksi Disatukan dengan Garis ATR (Kuning)
+                    st.markdown(f"**2. Grafik Mini Volume Transaksi & ATR (Bar Hijau/Merah: Volume, Garis Kuning: ATR Volatilitas):**")
+                    cols_vol_atr = st.columns(min(len(period_slices), 5))
+                    for idx, (label, s_df, chg) in enumerate(period_slices):
+                        col = cols_vol_atr[idx % 5]
+                        with col:
+                            if chg is not None and not s_df.empty and len(s_df) >= 2:
+                                vol_arr = extract_1d_array(s_df['Volume']) if 'Volume' in s_df.columns else np.array([])
+                                if len(vol_arr) >= 2 and vol_arr[0] > 0:
+                                    v_chg = ((vol_arr[-1] - vol_arr[0]) / vol_arr[0]) * 100.0
+                                    v_badge = f":green[▲ +{v_chg:.1f}%]" if v_chg >= 0 else f":red[▼ {v_chg:.1f}%]"
+                                else:
+                                    v_badge = "-"
+                            
+                                atr_arr = calculate_atr_series(s_df)
+                                latest_atr_str = smart_format(atr_arr[-1], prefix=curr_prefix) if len(atr_arr) > 0 else "-"
+                            
+                                st.markdown(f"<small><b>Vol {label}</b> ({v_badge})<br>ATR: <span style='color:#FFB300;'><b>{latest_atr_str}</b></span></small>", unsafe_allow_html=True)
+                                if not s_df.empty and 'Volume' in s_df.columns:
+                                    bar_cols = get_bar_colors_for_volume(s_df)
+                                    fig = render_combined_volume_atr_sparkline(s_df['Volume'], atr_arr, bar_colors=bar_cols)
+                                    st.pyplot(fig)
+                                    plt.close(fig)
+                                else:
+                                    st.write("-")
                             else:
-                                d_pos = True
-                                d_badge = "-"
-                            st.markdown(f"<small><b>Delta {label}</b><br>{d_badge}</small>", unsafe_allow_html=True)
-                            if len(daily_delta) > 0:
-                                fig = render_sparkline_chart(daily_delta, is_positive=d_pos, chart_type='bar', bar_colors=daily_delta_cols)
-                                st.pyplot(fig)
-                                plt.close(fig)
-                            else:
+                                st.markdown(f"<small><b>Vol {label}</b> (-)<br>ATR: -</small>", unsafe_allow_html=True)
                                 st.write("-")
-                        else:
-                            st.markdown(f"<small><b>Delta {label}</b><br>-</small>", unsafe_allow_html=True)
-                            st.write("-")
 
+                    # 3. Baris Chart Delta Volume Harian (Bar Hijau Net Buy & Merah Net Sell)
+                    st.markdown(f"**3. Grafik Mini Delta Volume (Bar Hijau: Net Buy, Bar Merah: Net Sell):**")
+                    cols_delta = st.columns(min(len(period_slices), 5))
+                    for idx, (label, s_df, chg) in enumerate(period_slices):
+                        col = cols_delta[idx % 5]
+                        with col:
+                            if chg is not None and not s_df.empty and len(s_df) >= 2:
+                                daily_delta, daily_delta_cols = calculate_daily_delta_volume_series(s_df)
+                                if len(daily_delta) > 0:
+                                    net_delta = np.sum(daily_delta)
+                                    d_pos = net_delta >= 0
+                                    d_badge = f":green[▲ +{format_market_cap(net_delta)} Net Buy]" if d_pos else f":red[▼ -{format_market_cap(abs(net_delta))} Net Sell]"
+                                else:
+                                    d_pos = True
+                                    d_badge = "-"
+                                st.markdown(f"<small><b>Delta {label}</b><br>{d_badge}</small>", unsafe_allow_html=True)
+                                if len(daily_delta) > 0:
+                                    fig = render_sparkline_chart(daily_delta, is_positive=d_pos, chart_type='bar', bar_colors=daily_delta_cols)
+                                    st.pyplot(fig)
+                                    plt.close(fig)
+                                else:
+                                    st.write("-")
+                            else:
+                                st.markdown(f"<small><b>Delta {label}</b><br>-</small>", unsafe_allow_html=True)
+                                st.write("-")
+
+            else:
+                st.caption("Grafik dilewati agar pemuatan cepat. Pilih Ya, buat & tampilkan di atas untuk membuatnya.")
         with st.popover("Tampilkan Semua Data Pelatihan"):
             st.write(format_df_for_display(data))
             csv_train = data.to_csv().encode('utf-8')
