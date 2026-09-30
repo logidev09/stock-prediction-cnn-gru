@@ -1956,11 +1956,8 @@ def plot_interactive_evaluation(actual_dates, y_test, y_pred, y_label, curr_pref
         pass
     return fig
 
-def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix="", timeframe="1D", fut_actual_dates=None, fut_actual_prices=None):
+def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, date_range, forecast, y_label, curr_prefix="", timeframe="1D", fut_actual_dates=None, fut_actual_prices=None, last_known_dt=None):
     fig = go.Figure()
-    today_dt = pd.to_datetime(date.today())
-    if hasattr(today_dt, 'tz') and today_dt.tz is not None:
-        today_dt = today_dt.tz_localize(None)
     
     h_dates = pd.to_datetime(hist_dates)
     if hasattr(h_dates, 'tz') and h_dates.tz is not None:
@@ -1969,6 +1966,26 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
     n_h = min(len(h_dates), len(h_prices))
     h_dates = h_dates[:n_h]
     h_prices = h_prices[:n_h]
+    try:
+        _now_w = pd.Timestamp.now(tz='Asia/Jakarta').tz_localize(None)
+    except Exception:
+        try:
+            _now_w = (pd.Timestamp.now(tz='UTC') + pd.Timedelta(hours=7)).tz_localize(None)
+        except Exception:
+            _now_w = pd.Timestamp.now()
+    try:
+        _known = pd.to_datetime(last_known_dt)
+        if hasattr(_known, 'tz') and _known.tz is not None:
+            _known = _known.tz_localize(None)
+    except Exception:
+        _known = h_dates[-1] if n_h > 0 else _now_w
+
+    def _is_gap(d):
+        try:
+            _dd = pd.to_datetime(d)
+            return bool((_dd > _known) and (_dd <= _now_w))
+        except Exception:
+            return False
     
     # 1. Hitung Extremum pada Harga Aktual
     act_max_val = np.max(h_prices) if n_h > 0 else -1e9
@@ -2099,7 +2116,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         # =========================================================================
         # 1. Transisi dari Uji Terakhir ke Prediksi Pertama
         if last_test_date is not None and last_test_price is not None:
-            is_past_or_today_p0 = (f_dates[0] <= today_dt)
+            is_past_or_today_p0 = _is_gap(f_dates[0])
             dash_p0 = 'dot' if is_past_or_today_p0 else 'solid'
             fig.add_trace(go.Scatter(
                 x=[last_test_date, f_dates[0]],
@@ -2113,7 +2130,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         # 2. Segmen Prediksi Model berikutnya
         for idx in range(n_f - 1):
             d_next = f_dates[idx + 1]
-            dash_p = 'dot' if (d_next <= today_dt) else 'solid'
+            dash_p = 'dot' if _is_gap(d_next) else 'solid'
             fig.add_trace(go.Scatter(
                 x=[f_dates[idx], d_next],
                 y=[f_prices[idx], f_prices[idx + 1]],
@@ -2158,7 +2175,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
         # --- B. PROYEKSI TREN AKTUAL (Ditaruh SETELAHNYA agar berada di FOREGROUND / DEPAN) ---
         # =========================================================================
         # 1. Transisi dari Aktual Terakhir ke Titik Proyeksi Pertama
-        is_past_or_today_0 = (f_dates[0] <= today_dt)
+        is_past_or_today_0 = _is_gap(f_dates[0])
         dash_style_0 = 'dot' if is_past_or_today_0 else 'solid'
         up_0 = (proj_prices[0] >= last_act_pr)
         col_0 = '#00C853' if up_0 else '#D50000'
@@ -2179,7 +2196,7 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             p_curr = proj_prices[idx]
             p_next = proj_prices[idx + 1]
             
-            is_past_or_today = (d_next <= today_dt)
+            is_past_or_today = _is_gap(d_next)
             dash_style = 'dot' if is_past_or_today else 'solid'
             seg_up = (p_next >= p_curr)
             seg_col = '#00C853' if seg_up else '#D50000'
@@ -2243,6 +2260,12 @@ def plot_interactive_forecast(hist_dates, hist_prices, actual_dates, y_pred, dat
             if n_fa >= 1:
                 fa_dates = fa_dates[:n_fa]
                 fa_prices = fa_prices[:n_fa]
+                try:
+                    fa_dates = pd.DatetimeIndex([h_dates[-1]]).append(fa_dates)
+                    fa_prices = np.concatenate([[float(h_prices[-1])], np.asarray(fa_prices, dtype=float)])
+                    n_fa = len(fa_prices)
+                except Exception:
+                    pass
                 base_fa = fa_prices[0] if fa_prices[0] > 0 else 1.0
                 hover_fa = []
                 for i in range(n_fa):
@@ -4019,10 +4042,15 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                 actual_days = 0
                 duration_str = "-"
 
-        st.markdown("**Cadangan Validasi Masa Mendatang (otomatis):**")
-        _max_reserve = max(0, len(data) - 30) if (data is not None and not data.empty) else 0
-        _suggest = min(120, max(0, len(data) - 120)) if (data is not None and len(data) > 150) else 0
-        reserve_n = st.number_input("Sisakan N titik terakhir sebagai Aktual Masa Mendatang / garis oranye (0 = nonaktif):", min_value=0, max_value=_max_reserve, value=min(_suggest, _max_reserve), step=1, key=f"reserve_n_{data_source}")
+        with st.expander("Cadangan Validasi Masa Mendatang (otomatis) — kegunaan & tips", expanded=False):
+            st.markdown("""
+            **Kegunaan:** menyisihkan N titik terakhir data pelatihan agar menjadi "masa depan yang sudah diketahui" — dari titik inilah garis oranye (Aktual Masa Mendatang) digambar dan metrik Proyeksi-vs-Aktual dihitung. Tanpa cadangan (N=0), model dilatih sampai titik terakhir sehingga tidak ada pembanding masa depan.
+            **Saran:** isi N sekitar horizon maksimum (mis. 120 untuk 2 jam pada data 1m); data sedikit (<150 titik) biarkan 0; minimal 30 baris latih selalu dijaga otomatis.
+            **Otomatis:** nilai awal sudah dihitung otomatis dari banyaknya data (0 bila data sedikit) — ubah manual bila perlu.
+            """)
+            _max_reserve = max(0, len(data) - 30) if (data is not None and not data.empty) else 0
+            _suggest = min(120, max(0, len(data) - 120)) if (data is not None and len(data) > 150) else 0
+            reserve_n = st.number_input("Sisakan N titik terakhir sebagai Aktual Masa Mendatang / garis oranye (0 = nonaktif):", min_value=0, max_value=_max_reserve, value=min(_suggest, _max_reserve), step=1, key=f"reserve_n_{data_source}")
         if reserve_n > 0 and data is not None and not data.empty and len(data) > 30:
             data = data.iloc[:-int(reserve_n)].copy()
             st.caption(f"Dilatih tanpa {int(reserve_n)} titik terakhir — titik tersebut menjadi acuan garis oranye + metrik masa mendatang.")
@@ -4063,9 +4091,9 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
         if fig_train is not None:
             render_plotly_with_tools(fig_train, key="fig_train_data_history")
 
-        _build_traincomp = st.radio("Buat grafik komprehensif Data Pelatihan (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_traincomp_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
 
         with st.expander(f"📈 Grafik Tren Riwayat Harga Candlestick, VPVR, Volume, ATR & Delta Volume (Data Pelatihan yang Dipilih)", expanded=False):
+            _build_traincomp = st.radio("Buat grafik komprehensif Data Pelatihan (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_traincomp_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
             if _build_traincomp:
                 fig_train_comp = plot_comprehensive_market_indicators(data, f'Indikator Pasar Komprehensif Candlestick & VPVR (Data Pelatihan {asset_type})', curr_prefix=curr_prefix, asset_type=asset_type, timeframe=timeframe)
                 if fig_train_comp is not None:
@@ -4077,9 +4105,9 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
         _mini_defs = build_mini_periods_for_tf(timeframe)
         _mini_lbl = ", ".join([_l for _l, _ in _mini_defs])
         expander_title = f"📈 Grafik Mini Tren Riwayat Harga, Volume, ATR & Delta Volume ({_mini_lbl}) — WIB, acuan Data Terakhir"
-        _build_mini = st.radio("Buat grafik mini tren (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_mini_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
 
         with st.expander(expander_title, expanded=False):
+            _build_mini = st.radio("Buat grafik mini tren (komputasi berat)?", ["Tidak (lebih cepat)", "Ya, buat & tampilkan"], index=0, key=f"gate_mini_{data_source}", horizontal=True) == "Ya, buat & tampilkan"
             if _build_mini:
                 if not data.empty:
                     try:
@@ -4821,7 +4849,8 @@ def main(stock, data_source="yfinance", api_key="", timeframe="1D", market_type=
                         curr_prefix=curr_prefix,
                         timeframe=timeframe,
                         fut_actual_dates=_af_dates,
-                        fut_actual_prices=_af_prices
+                        fut_actual_prices=_af_prices,
+                        last_known_dt=(full_data.index[-1] if (full_data is not None and not full_data.empty) else data.index[-1])
                     )
                     if fig_fc is not None:
                         render_plotly_with_tools(fig_fc, key=f"fig_forecast_{forecast_period}_{i}")
